@@ -3,6 +3,11 @@
 *.mp4
 # Dirs
 __data__
+__results__
+__figures__
+__logs__
+__models__
+__videos__
 # Mujoco
 MUJOCO_LOG.TXT
 # DrawIo
