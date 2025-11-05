@@ -34,7 +34,7 @@ def main():
         num_generations=config.num_generations,
     )
     grid_ea.initialize_population()
-    
+
     # Run evolution
     grid_ea.run_evolution()
     

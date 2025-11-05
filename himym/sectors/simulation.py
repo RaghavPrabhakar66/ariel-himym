@@ -8,7 +8,7 @@ from ariel.body_phenotypes.robogen_lite.prebuilt_robots.gecko import gecko
 
 
 def spatial_controller(model: mujoco.MjModel, data: mujoco.MjData, 
-                      population, tracked_geoms, num_joints):
+                      population, tracked_geoms, num_joints, config):
     """Controller using joint control parameters from genotype."""
     num_joints_per_robot = num_joints
     num_spawned_robots = len(tracked_geoms)
