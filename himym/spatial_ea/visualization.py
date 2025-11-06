@@ -53,7 +53,8 @@ def save_mating_trajectories(
     simulation_time: float,
     world_size: list[float],
     robot_size: float,
-    save_path: str
+    save_path: str,
+    use_periodic_boundaries: bool = False
 ) -> None:
     """
     Save visualization of robot trajectories during mating movement.
@@ -68,6 +69,7 @@ def save_mating_trajectories(
         world_size: Size of world [width, height]
         robot_size: Approximate robot diameter for visualization
         save_path: Path to save the figure
+        use_periodic_boundaries: Whether to handle periodic boundary wrapping in visualization
     """
     fig, ax = plt.subplots(figsize=(12, 12))
     
@@ -97,11 +99,8 @@ def save_mating_trajectories(
     # Create color mapping based on unique_id
     id_colors = [plt.cm.tab20(uid % 20 / 20) for uid in unique_ids]
     
-    # Calculate attractiveness scores
-    max_fitness = max(fitness_values) if max(fitness_values) > 0 else 1.0
-    attractiveness = [f / max_fitness for f in fitness_values]
-    
     # Fitness range for context
+    max_fitness = max(fitness_values) if max(fitness_values) > 0 else 1.0
     min_fitness = min(fitness_values)
     
     for i, trajectory in enumerate(trajectories):
@@ -109,15 +108,36 @@ def save_mating_trajectories(
         
         color = id_colors[i]
         
-        # Plot trajectory line
-        ax.plot(
-            trajectory[:, 0], 
-            trajectory[:, 1], 
-            color=color, 
-            alpha=0.6, 
-            linewidth=2, 
-            zorder=1
-        )
+        # Plot trajectory line with periodic boundary handling
+        if use_periodic_boundaries:
+            from periodic_boundary_utils import visualize_periodic_trajectory
+            # Get trajectory segments that handle wrapping
+            segments = visualize_periodic_trajectory(
+                trajectory, 
+                world_size[:2],  # Only x, y dimensions
+                wrap_threshold=0.5
+            )
+            # Plot each segment separately to avoid lines across the world
+            for segment in segments:
+                segment_array = np.array(segment)
+                ax.plot(
+                    segment_array[:, 0], 
+                    segment_array[:, 1], 
+                    color=color, 
+                    alpha=0.6, 
+                    linewidth=2, 
+                    zorder=1
+                )
+        else:
+            # Standard non-periodic plotting
+            ax.plot(
+                trajectory[:, 0], 
+                trajectory[:, 1], 
+                color=color, 
+                alpha=0.6, 
+                linewidth=2, 
+                zorder=1
+            )
         
         # Mark start position (circle) - size matches robot
         ax.plot(
@@ -179,6 +199,8 @@ def save_mating_trajectories(
     title = f'Mating Movement Trajectories - Generation {generation}\n'
     title += f'Population: {population_size} | Duration: {simulation_time}s\n'
     title += f'Fitness Range: {min_fitness:.3f} - {max_fitness:.3f}\n'
+    if use_periodic_boundaries:
+        title += f'Periodic Boundaries: ENABLED (trajectories split at wraps)\n'
     title += f'Colors: Unique Individual IDs | Numbers: Individual IDs | Small text: Fitness'
     ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
     

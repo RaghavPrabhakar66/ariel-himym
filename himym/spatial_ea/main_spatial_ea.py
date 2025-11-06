@@ -185,7 +185,9 @@ class SpatialEA:
             num_joints=self.num_joints,
             control_clip_min=config.control_clip_min,
             control_clip_max=config.control_clip_max,
-            fitness_values=fitness_values
+            fitness_values=fitness_values,
+            world_size=config.world_size,
+            use_periodic_boundaries=config.use_periodic_boundaries
         )
         
         # Set up video recording if requested
@@ -219,6 +221,14 @@ class SpatialEA:
         
         for step in range(sim_steps):
             mujoco.mj_step(self.model, self.data)
+            
+            # PERIODIC BOUNDARY FOR MOVEMENT
+            if config.use_periodic_boundaries:
+                from periodic_boundary_utils import apply_periodic_boundaries_to_simulation
+                apply_periodic_boundaries_to_simulation(
+                    self.tracked_geoms, 
+                    (config.world_size[0], config.world_size[1])
+                )
             
             # Sample positions periodically
             update_trajectories(trajectories, self.tracked_geoms, step, sample_interval)
@@ -266,7 +276,8 @@ class SpatialEA:
                 simulation_time=config.simulation_time,
                 world_size=config.world_size,
                 robot_size=config.robot_size,
-                save_path=save_path
+                save_path=save_path,
+                use_periodic_boundaries=config.use_periodic_boundaries
             )
     
     def create_next_generation(self, record_video: bool = False) -> None:
@@ -315,7 +326,15 @@ class SpatialEA:
                     continue
                 
                 other_pos = self.tracked_geoms[other_idx].xpos.copy()
-                distance = np.linalg.norm(current_pos - other_pos)
+                
+                # Calculate distance using periodic boundaries if enabled
+                if config.use_periodic_boundaries:
+                    from periodic_boundary_utils import periodic_distance
+                    distance = periodic_distance(
+                        current_pos, other_pos, (config.world_size[0], config.world_size[1])
+                    )
+                else:
+                    distance = np.linalg.norm(current_pos - other_pos)
                 
                 # Check if within pairing radius and has higher fitness than current best
                 if distance <= config.pairing_radius and other_ind.fitness > best_partner_fitness:
@@ -339,7 +358,6 @@ class SpatialEA:
                     config.offspring_radius * np.sin(angle1),
                     0.0
                 ])
-                child1_pos = parent1_pos + child1_offset
                 
                 angle2 = np.random.uniform(0, 2 * np.pi)
                 child2_offset = np.array([
@@ -347,7 +365,20 @@ class SpatialEA:
                     config.offspring_radius * np.sin(angle2),
                     0.0
                 ])
-                child2_pos = parent2_pos + child2_offset
+                
+                # Apply offspring positions with periodic wrapping if enabled
+                if config.use_periodic_boundaries:
+                    from periodic_boundary_utils import wrap_offspring_position
+                    child1_pos = wrap_offspring_position(
+                        parent1_pos, child1_offset, (config.world_size[0], config.world_size[1])
+                    )
+                    child2_pos = wrap_offspring_position(
+                        parent2_pos, child2_offset, (config.world_size[0], config.world_size[1])
+                    )
+                else:
+                    # Non-periodic: just add offset (may go outside bounds)
+                    child1_pos = parent1_pos + child1_offset
+                    child2_pos = parent2_pos + child2_offset
                 
                 pair_positions.append((child1_pos, child2_pos))
         

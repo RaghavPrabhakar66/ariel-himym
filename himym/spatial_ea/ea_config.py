@@ -148,6 +148,10 @@ class EAConfig:
     def control_clip_max(self) -> float:
         return self._config['simulation']['control_clip_max']
     
+    @property
+    def use_periodic_boundaries(self) -> bool:
+        return self._config['simulation'].get('use_periodic_boundaries', False)
+    
     # Multi-Robot Parameters
     @property
     def num_demo_robots(self) -> int:

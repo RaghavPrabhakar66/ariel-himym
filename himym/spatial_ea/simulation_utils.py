@@ -225,7 +225,9 @@ def create_mating_controller(
     num_joints: int,
     control_clip_min: float,
     control_clip_max: float,
-    fitness_values: list[float]
+    fitness_values: list[float],
+    world_size: list[float] | None = None,
+    use_periodic_boundaries: bool = False
 ):
     """
     Create a controller that biases movement towards attractive neighbors.
@@ -237,6 +239,8 @@ def create_mating_controller(
         control_clip_min: Minimum control value
         control_clip_max: Maximum control value
         fitness_values: Fitness scores for calculating attractiveness
+        world_size: World dimensions [width, height, z] for periodic boundaries
+        use_periodic_boundaries: Whether to use periodic distance calculations
         
     Returns:
         Controller function
@@ -261,7 +265,15 @@ def create_mating_controller(
                     continue
                 
                 other_pos = tracked_geoms[other_idx].xpos.copy()
-                distance = np.linalg.norm(current_pos - other_pos)
+                
+                # Calculate distance (periodic or direct)
+                if use_periodic_boundaries and world_size is not None:
+                    from periodic_boundary_utils import periodic_distance
+                    distance = periodic_distance(
+                        current_pos, other_pos, (world_size[0], world_size[1])
+                    )
+                else:
+                    distance = np.linalg.norm(current_pos - other_pos)
                 
                 # Score = attractiveness / distance (prefer close + fit partners)
                 if distance > 0.1:  # Avoid division by zero
@@ -279,8 +291,16 @@ def create_mating_controller(
                 bias = 0.0
                 if best_neighbor_idx is not None and min_dist > 0.5:
                     neighbor_pos = tracked_geoms[best_neighbor_idx].xpos.copy()
-                    direction = neighbor_pos - current_pos
-                    direction_2d = np.array([direction[0], direction[1]])
+                    
+                    # Calculate direction (periodic or direct)
+                    if use_periodic_boundaries and world_size is not None:
+                        from periodic_boundary_utils import periodic_displacement
+                        direction_2d = periodic_displacement(
+                            current_pos, neighbor_pos, (world_size[0], world_size[1])
+                        )
+                    else:
+                        direction = neighbor_pos - current_pos
+                        direction_2d = np.array([direction[0], direction[1]])
                     
                     # Simple directional bias scaled by neighbor's attractiveness
                     bias = 0.2 * attractiveness[best_neighbor_idx] * np.sign(direction_2d[j % 2])
