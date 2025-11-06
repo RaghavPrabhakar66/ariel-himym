@@ -95,5 +95,5 @@ def evaluate_population(
         if (i + 1) % 5 == 0:
             print(f"    Evaluated {i + 1}/{len(population)} robots")
     
-    print(f"  Fitness evaluation complete!")
+    print(f"  FITNESS EVALUATION COMPLETE")
     return fitness_values

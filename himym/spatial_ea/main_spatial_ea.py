@@ -167,7 +167,7 @@ class SpatialEA:
             save_trajectories: Whether to save trajectory visualization
             record_video: Whether to record video
         """
-        print(f"  Mating movement phase ({duration}s)...")
+        print(f"  MATING MOVEMENT PHASE ({duration}s)")
         
         fitness_values = [ind.fitness for ind in self.population]
         num_spawned = len(self.tracked_geoms)
@@ -175,7 +175,6 @@ class SpatialEA:
         # Initialize trajectory tracking
         sample_interval = max(1, int(duration / self.model.opt.timestep) // 100)
         print(f"  Tracking trajectories for {num_spawned} spawned robots")
-        print(f"  Sample interval: {sample_interval} steps")
         
         trajectories = track_trajectories(self.tracked_geoms, sample_interval)
         
@@ -237,8 +236,7 @@ class SpatialEA:
             pos = self.tracked_geoms[i].xpos.copy()
             trajectories[i].append(pos[:2])
         
-        print(f"  Mating movement complete!")
-        print(f"  Trajectory points per robot: ~{len(trajectories[0])} samples")
+        print(f"  MATING MOVEMENT COMPLETE")
         
         # Clean up video recording
         if record_video and video_recorder is not None:
@@ -255,9 +253,6 @@ class SpatialEA:
         
         print(f"  Updated positions for next generation")
         print(f"    Tracked {len(self.current_positions)} positions")
-        if len(self.current_positions) >= 3:
-            print(f"    Sample positions: {self.current_positions[0][:2]}, "
-                  f"{self.current_positions[1][:2]}, {self.current_positions[2][:2]}")
         
         # Save trajectory visualization
         if save_trajectories:
@@ -605,7 +600,6 @@ class SpatialEA:
 
 def main():
     """Main entry point for the spatial EA."""
-    print("Initializing robot specifications...")
     temp_world = SimpleFlatWorld(config.world_size)
     temp_robot = gecko()
     temp_world.spawn(temp_robot.spec, spawn_position=[0, 0, 0])

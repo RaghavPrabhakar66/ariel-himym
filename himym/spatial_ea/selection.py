@@ -60,9 +60,9 @@ def apply_selection(
     new_population = [population[i] for i in indices_to_keep]
     new_positions = [current_positions[i] for i in indices_to_keep]
     new_size = len(new_population)
-    
-    print(f"  Selection complete: {initial_size} → {new_size}")
-    
+
+    print(f"  SELECTION COMPLETE: {initial_size} -> {new_size}")
+
     if method == "parents_die":
         parent_count = sum(1 for ind in new_population if ind.generation == current_generation)
         offspring_count = sum(1 for ind in new_population if ind.generation > current_generation)
