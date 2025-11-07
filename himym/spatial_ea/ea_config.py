@@ -66,6 +66,10 @@ class EAConfig:
     def selection_method(self) -> str:
         return self._config['selection'].get('selection_method', 'parents_die')
     
+    @property
+    def pairing_method(self) -> str:
+        return self._config['selection'].get('pairing_method', 'proximity_fitness')
+    
     # Crossover Parameters
     @property
     def crossover_rate(self) -> float:

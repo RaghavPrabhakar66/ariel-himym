@@ -15,6 +15,7 @@ from genetic_operators import (
 from selection import apply_selection
 from evaluation import evaluate_population
 from visualization import plot_fitness_evolution, save_mating_trajectories
+from parent_selection import find_pairs, calculate_offspring_positions
 from simulation_utils import (
     generate_spawn_positions,
     spawn_population_in_world,
@@ -30,6 +31,7 @@ from ariel.body_phenotypes.robogen_lite.prebuilt_robots.gecko import gecko
 from ariel.simulation.environments.simple_flat_world import SimpleFlatWorld
 from ariel.utils.renderers import video_renderer
 from ariel.utils.video_recorder import VideoRecorder
+from periodic_boundary_utils import apply_periodic_boundaries_to_simulation
 
 
 class SpatialEA:
@@ -224,7 +226,7 @@ class SpatialEA:
             
             # PERIODIC BOUNDARY FOR MOVEMENT
             if config.use_periodic_boundaries:
-                from periodic_boundary_utils import apply_periodic_boundaries_to_simulation
+                
                 apply_periodic_boundaries_to_simulation(
                     self.tracked_geoms, 
                     (config.world_size[0], config.world_size[1])
@@ -299,91 +301,29 @@ class SpatialEA:
         new_population: list[SpatialIndividual] = []
         new_positions: list[np.ndarray] = []
         
-        # Find pairs based on proximity
-        pairs = []
-        pair_positions = []
-        paired_indices = set()
-        
-        # Sort population by fitness (descending) to prioritize high-fitness individuals
-        fitness_ranking = sorted(
-            enumerate(self.population), 
-            key=lambda x: x[1].fitness, 
-            reverse=True
+        # Find pairs based on selected pairing method
+        pairs, paired_indices = find_pairs(
+            population=self.population,
+            tracked_geoms=self.tracked_geoms,
+            method=config.pairing_method,
+            pairing_radius=config.pairing_radius,
+            world_size=(config.world_size[0], config.world_size[1]),
+            use_periodic_boundaries=config.use_periodic_boundaries,
+            tournament_size=config.tournament_size
         )
         
-        for idx, _ in fitness_ranking:
-            if idx in paired_indices:
-                continue  # Already paired
-            
-            current_pos = self.tracked_geoms[idx].xpos.copy()
-            
-            # Find highest fitness partner within pairing radius
-            best_partner_idx = None
-            best_partner_fitness = -1
-            
-            for other_idx, other_ind in enumerate(self.population):
-                if other_idx == idx or other_idx in paired_indices:
-                    continue
-                
-                other_pos = self.tracked_geoms[other_idx].xpos.copy()
-                
-                # Calculate distance using periodic boundaries if enabled
-                if config.use_periodic_boundaries:
-                    from periodic_boundary_utils import periodic_distance
-                    distance = periodic_distance(
-                        current_pos, other_pos, (config.world_size[0], config.world_size[1])
-                    )
-                else:
-                    distance = np.linalg.norm(current_pos - other_pos)
-                
-                # Check if within pairing radius and has higher fitness than current best
-                if distance <= config.pairing_radius and other_ind.fitness > best_partner_fitness:
-                    best_partner_fitness = other_ind.fitness
-                    best_partner_idx = other_idx
-            
-            # If found a partner within radius, create pair
-            if best_partner_idx is not None:
-                pairs.append((idx, best_partner_idx))
-                paired_indices.add(idx)
-                paired_indices.add(best_partner_idx)
-                
-                # Calculate offspring positions
-                parent1_pos = self.current_positions[idx]
-                parent2_pos = self.current_positions[best_partner_idx]
-                
-                # Random positions on circle edge around each parent
-                angle1 = np.random.uniform(0, 2 * np.pi)
-                child1_offset = np.array([
-                    config.offspring_radius * np.cos(angle1),
-                    config.offspring_radius * np.sin(angle1),
-                    0.0
-                ])
-                
-                angle2 = np.random.uniform(0, 2 * np.pi)
-                child2_offset = np.array([
-                    config.offspring_radius * np.cos(angle2),
-                    config.offspring_radius * np.sin(angle2),
-                    0.0
-                ])
-                
-                # Apply offspring positions with periodic wrapping if enabled
-                if config.use_periodic_boundaries:
-                    from periodic_boundary_utils import wrap_offspring_position
-                    child1_pos = wrap_offspring_position(
-                        parent1_pos, child1_offset, (config.world_size[0], config.world_size[1])
-                    )
-                    child2_pos = wrap_offspring_position(
-                        parent2_pos, child2_offset, (config.world_size[0], config.world_size[1])
-                    )
-                else:
-                    # Non-periodic: just add offset (may go outside bounds)
-                    child1_pos = parent1_pos + child1_offset
-                    child2_pos = parent2_pos + child2_offset
-                
-                pair_positions.append((child1_pos, child2_pos))
-        
         print(f"  Created {len(pairs)} pairs from {self.population_size} robots")
+        print(f"  Pairing method: {config.pairing_method}")
         print(f"  Unpaired robots: {self.population_size - len(paired_indices)}")
+        
+        # Calculate offspring positions for all pairs
+        pair_positions = calculate_offspring_positions(
+            pairs=pairs,
+            current_positions=self.current_positions,
+            offspring_radius=config.offspring_radius,
+            world_size=(config.world_size[0], config.world_size[1]),
+            use_periodic_boundaries=config.use_periodic_boundaries
+        )
         
         # Create offspring from pairs
         for pair_idx, (parent1_idx, parent2_idx) in enumerate(pairs):
