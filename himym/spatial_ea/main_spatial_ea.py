@@ -16,6 +16,7 @@ from selection import apply_selection
 from evaluation import evaluate_population
 from visualization import plot_fitness_evolution, save_mating_trajectories
 from parent_selection import find_pairs, calculate_offspring_positions
+from evolution_data_collector import EvolutionDataCollector
 from simulation_utils import (
     generate_spawn_positions,
     spawn_population_in_world,
@@ -64,6 +65,9 @@ class SpatialEA:
         self.generation = 0
         self.fitness_history: list[float] = []
         self.best_individual_history: list[SpatialIndividual] = []
+        
+        # Data collection
+        self.data_collector = EvolutionDataCollector(config=config)
         
         # World and simulation
         self.world = None
@@ -417,6 +421,13 @@ class SpatialEA:
         print(f"  Pairing method: {config.pairing_method}")
         print(f"  Unpaired robots: {self.population_size - len(paired_indices)}")
         
+        # Record mating statistics
+        self.data_collector.record_mating_stats(
+            num_pairs=len(pairs),
+            num_unpaired=self.population_size - len(paired_indices),
+            population_size=self.population_size
+        )
+        
         # Calculate offspring positions for all pairs
         pair_positions = calculate_offspring_positions(
             pairs=pairs,
@@ -511,6 +522,12 @@ class SpatialEA:
         print(f"  Position tracking updated: {len(self.current_positions)} positions")
         print(f"  Paired individuals: {len(paired_indices)} out of {old_size}")
         
+        # Record reproduction statistics
+        self.data_collector.record_reproduction(
+            num_offspring=len(new_population),
+            population_before=old_size
+        )
+        
         # Report mating energy effects
         if config.enable_energy:
             energy_values = [ind.energy for ind in self.population]
@@ -520,11 +537,17 @@ class SpatialEA:
                 print(f"  Mating effect: Energy restored to {config.initial_energy} for {len(pairs)} mating pairs")
             elif config.mating_energy_effect == "cost":
                 print(f"  Mating effect: Energy cost of {config.mating_energy_amount} for {len(pairs)} mating pairs")
+            
+            # Record energy stats after mating
+            self.data_collector.record_energy_stats(self.population, "after_mating")
         
         # Show fitness statistics before selection
         fitness_values = [ind.fitness for ind in self.population]
         print(f"  Pre-selection fitness range: {min(fitness_values):.4f} to {max(fitness_values):.4f}")
         print(f"  Pre-selection fitness variation: {max(fitness_values) - min(fitness_values):.4f}")
+        
+        # Record population size before selection
+        population_before_selection = len(self.population)
         
         # Apply selection to manage population size
         self.population, self.current_positions, self.population_size, self.current_orientations = apply_selection(
@@ -536,6 +559,12 @@ class SpatialEA:
             current_orientations=self.current_orientations,
             paired_indices=paired_indices,
             max_age=config.max_age
+        )
+        
+        # Record selection statistics
+        self.data_collector.record_selection(
+            population_before=population_before_selection,
+            population_after=len(self.population)
         )
     
     def run_evolution(self) -> SpatialIndividual:
@@ -565,6 +594,9 @@ class SpatialEA:
             print(f"Generation {gen + 1}/{self.num_generations}")
             print(f"{'='*60}")
             
+            # Record generation start
+            self.data_collector.record_generation_start(gen, len(self.population))
+            
             # Update mating zones if dynamic
             self._update_mating_zones()
             
@@ -573,6 +605,15 @@ class SpatialEA:
             
             # Evaluate fitness
             fitness_values = self.evaluate_population_fitness()
+            
+            # Record fitness statistics
+            self.data_collector.record_fitness_stats(self.population, gen)
+            
+            # Record age statistics
+            self.data_collector.record_age_stats(self.population, gen)
+            
+            # Record genotype diversity
+            self.data_collector.record_genotype_diversity(self.population)
             
             # Track statistics
             best_fitness = max(fitness_values)
@@ -601,7 +642,175 @@ class SpatialEA:
         print("EVOLUTION COMPLETE")
         print(f"{'='*60}")
         
+        # Save collected data
+        print(f"\nSaving evolution data...")
+        summary = self.data_collector.get_summary_stats()
+        print(f"\nEvolution Summary:")
+        print(f"  Total generations: {summary['total_generations']}")
+        print(f"  Population: {summary['population']['initial']} → {summary['population']['final']}")
+        print(f"  Best fitness ever: {summary['fitness']['best_ever']:.4f}")
+        print(f"  Total births: {summary['total_births']}")
+        print(f"  Total deaths: {summary['total_deaths']}")
+        print(f"  Avg mating success: {summary['avg_mating_success_rate']:.1f}%")
+        
+        self.data_collector.save_to_csv(config.results_folder)
+        self.data_collector.save_to_npz(config.results_folder)
+        self.data_collector.plot_evolution_statistics(config.figures_folder)
+        
+        # Save final population controllers
+        self.save_final_controllers()
+        
         return self.get_best_individual()
+    
+    def save_final_controllers(self) -> None:
+        """
+        Save the final population's controllers (genotypes) to files.
+        
+        Saves in multiple formats:
+        - JSON: Human-readable with individual metadata
+        - NPZ: NumPy format for fast loading
+        - TXT: Simple readable format for best individual
+        """
+        from datetime import datetime
+        from pathlib import Path
+        import json
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_folder = Path(config.results_folder)
+        results_folder.mkdir(parents=True, exist_ok=True)
+        
+        # 1. Save all controllers as JSON with metadata
+        json_path = results_folder / f"final_controllers_{timestamp}.json"
+        controllers_data = {
+            'timestamp': timestamp,
+            'generation': self.generation,
+            'num_joints': self.num_joints,
+            'population_size': len(self.population),
+            'config': {
+                'selection_method': config.selection_method,
+                'enable_energy': config.enable_energy,
+                'mating_energy_effect': config.mating_energy_effect if config.enable_energy else None,
+            },
+            'controllers': []
+        }
+        
+        for ind in self.population:
+            controller = {
+                'unique_id': ind.unique_id,
+                'generation_born': ind.generation,
+                'age': self.generation - ind.generation,
+                'fitness': ind.fitness,
+                'energy': ind.energy if config.enable_energy else None,
+                'genotype': ind.genotype,
+                'parent_ids': ind.parent_ids,
+                'position': ind.spawn_position.tolist() if ind.spawn_position is not None else None,
+            }
+            controllers_data['controllers'].append(controller)
+        
+        # Sort by fitness (best first)
+        controllers_data['controllers'].sort(key=lambda x: x['fitness'], reverse=True)
+        
+        with open(json_path, 'w') as f:
+            json.dump(controllers_data, f, indent=2)
+        print(f"  Final controllers saved to JSON: {json_path}")
+        
+        # 2. Save all genotypes as NPZ (fast loading for analysis)
+        npz_path = results_folder / f"final_genotypes_{timestamp}.npz"
+        genotype_array = np.array([ind.genotype for ind in self.population])
+        fitness_array = np.array([ind.fitness for ind in self.population])
+        energy_array = np.array([ind.energy for ind in self.population]) if config.enable_energy else None
+        age_array = np.array([self.generation - ind.generation for ind in self.population])
+        id_array = np.array([ind.unique_id for ind in self.population])
+        
+        npz_data = {
+            'genotypes': genotype_array,
+            'fitness': fitness_array,
+            'ages': age_array,
+            'ids': id_array,
+            'num_joints': self.num_joints,
+            'generation': self.generation,
+        }
+        if energy_array is not None:
+            npz_data['energy'] = energy_array
+        
+        np.savez(npz_path, **npz_data)
+        print(f"  Final genotypes saved to NPZ: {npz_path}")
+        
+        # 3. Save best controller in human-readable format
+        best = self.get_best_individual()
+        txt_path = results_folder / f"best_controller_{timestamp}.txt"
+        
+        with open(txt_path, 'w') as f:
+            f.write("=" * 60 + "\n")
+            f.write("BEST CONTROLLER\n")
+            f.write("=" * 60 + "\n\n")
+            f.write(f"Individual ID: {best.unique_id}\n")
+            f.write(f"Born in Generation: {best.generation}\n")
+            f.write(f"Age: {self.generation - best.generation} generations\n")
+            f.write(f"Fitness: {best.fitness:.6f}\n")
+            if config.enable_energy:
+                f.write(f"Energy: {best.energy:.2f}\n")
+            f.write(f"Parent IDs: {best.parent_ids}\n")
+            f.write(f"\nGenotype ({len(best.genotype)} values for {self.num_joints} joints):\n")
+            f.write("-" * 60 + "\n")
+            
+            # Format genotype as joint parameters
+            for j in range(self.num_joints):
+                if j * 3 + 2 < len(best.genotype):
+                    amp = best.genotype[j * 3]
+                    freq = best.genotype[j * 3 + 1]
+                    phase = best.genotype[j * 3 + 2]
+                    f.write(f"Joint {j}:\n")
+                    f.write(f"  Amplitude: {amp:.6f}\n")
+                    f.write(f"  Frequency: {freq:.6f}\n")
+                    f.write(f"  Phase:     {phase:.6f}\n")
+            
+            f.write("\n" + "-" * 60 + "\n")
+            f.write("Raw genotype array:\n")
+            f.write(str(best.genotype) + "\n")
+        
+        print(f"  Best controller saved to TXT: {txt_path}")
+        
+        # Summary
+        print(f"\n  Saved {len(self.population)} controllers from final population")
+        print(f"  Best fitness: {best.fitness:.6f} (ID: {best.unique_id})")
+    
+    @staticmethod
+    def load_controllers_from_json(json_path: str) -> dict:
+        """
+        Load controllers from a saved JSON file.
+        
+        Args:
+            json_path: Path to the JSON file
+            
+        Returns:
+            Dictionary containing all controller data
+        """
+        import json
+        with open(json_path, 'r') as f:
+            return json.load(f)
+    
+    @staticmethod
+    def load_genotypes_from_npz(npz_path: str) -> dict:
+        """
+        Load genotypes from a saved NPZ file.
+        
+        Args:
+            npz_path: Path to the NPZ file
+            
+        Returns:
+            Dictionary with arrays: genotypes, fitness, ages, ids
+        """
+        data = np.load(npz_path)
+        return {
+            'genotypes': data['genotypes'],
+            'fitness': data['fitness'],
+            'ages': data['ages'],
+            'ids': data['ids'],
+            'num_joints': int(data['num_joints']),
+            'generation': int(data['generation']),
+            'energy': data['energy'] if 'energy' in data else None,
+        }
     
     def get_best_individual(self) -> SpatialIndividual:
         """Get the best individual from current population."""
