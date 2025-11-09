@@ -22,12 +22,14 @@ class SpatialIndividual:
         spawn_position: Position where robot was spawned in simulation
         robot_index: Index of this robot in the population
         parent_ids: List of unique IDs of parent individuals
+        energy: Current energy level (for energy-based selection)
     """
     
     def __init__(
         self, 
         unique_id: int | None = None, 
-        generation: int = 0
+        generation: int = 0,
+        initial_energy: float = 100.0
     ):
         """
         Initialize a new individual.
@@ -35,6 +37,7 @@ class SpatialIndividual:
         Args:
             unique_id: Unique identifier for this individual
             generation: Generation number when created
+            initial_energy: Starting energy level
         """
         self.unique_id = unique_id
         self.generation = generation
@@ -45,11 +48,12 @@ class SpatialIndividual:
         self.spawn_position: np.ndarray | None = None
         self.robot_index: int | None = None
         self.parent_ids: list[int] = []
+        self.energy: float = initial_energy
     
     def __repr__(self) -> str:
         """String representation of the individual."""
         return (f"SpatialIndividual(id={self.unique_id}, gen={self.generation}, "
-                f"fitness={self.fitness:.4f})")
+                f"fitness={self.fitness:.4f}, energy={self.energy:.1f})")
     
     def copy(self) -> 'SpatialIndividual':
         """
@@ -60,7 +64,7 @@ class SpatialIndividual:
         Returns:
             A new SpatialIndividual with copied attributes
         """
-        new_individual = SpatialIndividual(generation=self.generation)
+        new_individual = SpatialIndividual(generation=self.generation, initial_energy=self.energy)
         new_individual.genotype = self.genotype.copy()
         new_individual.fitness = self.fitness
         new_individual.parent_ids = [self.unique_id]

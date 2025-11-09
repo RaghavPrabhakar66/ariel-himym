@@ -140,7 +140,8 @@ class SpatialEA:
         """Create a new individual with random genotype."""
         individual = SpatialIndividual(
             unique_id=self.next_unique_id, 
-            generation=self.generation
+            generation=self.generation,
+            initial_energy=config.initial_energy
         )
         self.next_unique_id += 1
         
@@ -381,6 +382,15 @@ class SpatialEA:
         """
         print(f"  Creating next generation with movement-based selection...")
         
+        # Deplete energy for all individuals (time-based passive depletion)
+        if config.enable_energy:
+            for ind in self.population:
+                ind.energy -= config.energy_depletion_rate
+            
+            energy_values = [ind.energy for ind in self.population]
+            print(f"  Energy after depletion: min={min(energy_values):.1f}, "
+                  f"max={max(energy_values):.1f}, avg={np.mean(energy_values):.1f}")
+        
         # Allow robots to move towards partners
         self.mating_movement_phase(
             duration=config.simulation_time, 
@@ -420,6 +430,18 @@ class SpatialEA:
         for pair_idx, (parent1_idx, parent2_idx) in enumerate(pairs):
             parent1 = self.population[parent1_idx]
             parent2 = self.population[parent2_idx]
+            
+            # Apply mating energy effects to parents
+            if config.enable_energy:
+                if config.mating_energy_effect == "restore":
+                    # Mating restores energy to initial value
+                    parent1.energy = config.initial_energy
+                    parent2.energy = config.initial_energy
+                elif config.mating_energy_effect == "cost":
+                    # Mating costs energy
+                    parent1.energy -= config.mating_energy_amount
+                    parent2.energy -= config.mating_energy_amount
+                # If "none", no energy effect from mating
             
             # Crossover
             if np.random.random() < config.crossover_rate:
@@ -488,6 +510,16 @@ class SpatialEA:
         print(f"  Added {len(new_population)} offspring")
         print(f"  Position tracking updated: {len(self.current_positions)} positions")
         print(f"  Paired individuals: {len(paired_indices)} out of {old_size}")
+        
+        # Report mating energy effects
+        if config.enable_energy:
+            energy_values = [ind.energy for ind in self.population]
+            print(f"  Energy after mating: min={min(energy_values):.1f}, "
+                  f"max={max(energy_values):.1f}, avg={np.mean(energy_values):.1f}")
+            if config.mating_energy_effect == "restore":
+                print(f"  Mating effect: Energy restored to {config.initial_energy} for {len(pairs)} mating pairs")
+            elif config.mating_energy_effect == "cost":
+                print(f"  Mating effect: Energy cost of {config.mating_energy_amount} for {len(pairs)} mating pairs")
         
         # Show fitness statistics before selection
         fitness_values = [ind.fitness for ind in self.population]

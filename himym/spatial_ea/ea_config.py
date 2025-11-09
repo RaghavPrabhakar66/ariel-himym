@@ -98,6 +98,32 @@ class EAConfig:
         """Maximum age for probabilistic_age selection (death probability = age/max_age)."""
         return self._config['selection'].get('max_age', 10)
     
+    # Energy-Based Selection Parameters
+    @property
+    def enable_energy(self) -> bool:
+        """Enable energy-based survival mechanics."""
+        return self._config['selection'].get('enable_energy', False)
+    
+    @property
+    def initial_energy(self) -> float:
+        """Starting energy for each individual."""
+        return self._config['selection'].get('initial_energy', 100.0)
+    
+    @property
+    def energy_depletion_rate(self) -> float:
+        """Energy lost per generation (time-based passive depletion)."""
+        return self._config['selection'].get('energy_depletion_rate', 1.0)
+    
+    @property
+    def mating_energy_effect(self) -> str:
+        """Effect of mating on energy: 'restore' (full reset), 'cost' (energy penalty), 'none' (no effect)."""
+        return self._config['selection'].get('mating_energy_effect', 'restore')
+    
+    @property
+    def mating_energy_amount(self) -> float:
+        """Energy restored (if 'restore') or cost deducted (if 'cost') when mating occurs."""
+        return self._config['selection'].get('mating_energy_amount', 50.0)
+    
     # Crossover Parameters
     @property
     def crossover_rate(self) -> float:

@@ -7,6 +7,7 @@ robot control parameters.
 
 import numpy as np
 from spatial_individual import SpatialIndividual
+from ea_config import config
 
 
 def create_initial_genotype(
@@ -55,11 +56,19 @@ def crossover_one_point(
     Returns:
         Tuple of (child1, child2, updated_next_unique_id)
     """
-    child1 = SpatialIndividual(unique_id=next_unique_id, generation=generation)
+    child1 = SpatialIndividual(
+        unique_id=next_unique_id, 
+        generation=generation,
+        initial_energy=config.initial_energy
+    )
     next_unique_id += 1
     child1.parent_ids = [parent1.unique_id, parent2.unique_id]
     
-    child2 = SpatialIndividual(unique_id=next_unique_id, generation=generation)
+    child2 = SpatialIndividual(
+        unique_id=next_unique_id, 
+        generation=generation,
+        initial_energy=config.initial_energy
+    )
     next_unique_id += 1
     child2.parent_ids = [parent1.unique_id, parent2.unique_id]
     
@@ -101,7 +110,11 @@ def mutate_gaussian(
     Returns:
         Tuple of (mutated_individual, updated_next_unique_id)
     """
-    mutated = SpatialIndividual(unique_id=next_unique_id, generation=individual.generation)
+    mutated = SpatialIndividual(
+        unique_id=next_unique_id, 
+        generation=individual.generation,
+        initial_energy=config.initial_energy
+    )
     next_unique_id += 1
     mutated.parent_ids = [individual.unique_id]
     mutated.genotype = individual.genotype.copy()
@@ -147,7 +160,11 @@ def clone_individual(
     Returns:
         Tuple of (cloned_individual, updated_next_unique_id)
     """
-    clone = SpatialIndividual(unique_id=next_unique_id, generation=generation)
+    clone = SpatialIndividual(
+        unique_id=next_unique_id, 
+        generation=generation,
+        initial_energy=config.initial_energy
+    )
     next_unique_id += 1
     clone.genotype = individual.genotype.copy()
     clone.parent_ids = [individual.unique_id]

@@ -5,7 +5,6 @@ try:
     from spatial_individual import SpatialIndividual
     from periodic_boundary_utils import periodic_distance
 except ImportError:
-    # Support both direct execution and package imports
     from himym.spatial_ea.spatial_individual import SpatialIndividual
     from himym.spatial_ea.periodic_boundary_utils import periodic_distance
 

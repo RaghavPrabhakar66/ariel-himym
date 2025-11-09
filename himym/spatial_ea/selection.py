@@ -37,12 +37,15 @@ def apply_selection(
     """
     initial_size = len(population)
     
-    # Probabilistic age selection ignores target size and lets population fluctuate
+    # Probabilistic age selection and energy-based selection ignore target size
     if method == "probabilistic_age":
         print(f"  Applying {method} selection: {initial_size} → natural dynamics (no target)")
         indices_to_keep = _selection_probabilistic_age(
             population, target_size, current_generation, max_age
         )
+    elif method == "energy_based":
+        print(f"  Applying {method} selection: {initial_size} → natural dynamics (no target)")
+        indices_to_keep = _selection_energy_based(population, target_size)
     else:
         # Other methods enforce target size
         # If population is below target, no selection needed
@@ -99,6 +102,11 @@ def apply_selection(
         for ind in new_population:
             gen_counts[ind.generation] = gen_counts.get(ind.generation, 0) + 1
         print(f"    Generation distribution: {dict(sorted(gen_counts.items()))}")
+    elif method == "energy_based":
+        # Show energy distribution of survivors
+        energies = [ind.energy for ind in new_population]
+        avg_energy = sum(energies) / len(energies) if energies else 0
+        print(f"    Survivor energy: min={min(energies):.1f}, max={max(energies):.1f}, avg={avg_energy:.1f}")
     
     return new_population, new_positions, new_size, new_orientations
 
@@ -223,7 +231,7 @@ def _selection_probabilistic_age(
     
     Each individual has a probability of death that increases with age.
     Population size will fluctuate naturally based on probabilistic outcomes.
-    
+
     Args:
         population: Current population
         target_size: Target population size (ignored in this method)
@@ -251,5 +259,41 @@ def _selection_probabilistic_age(
     
     print(f"    Probabilistic age-based death (max_age={max_age}): {len(deaths)} died, {len(survivors)} survived naturally")
     print(f"    Population change: {len(population)} → {len(survivors)} (no size enforcement)")
+    
+    return survivors
+
+
+def _selection_energy_based(
+    population: list[SpatialIndividual],
+    target_size: int
+) -> list[int]:
+    """
+    Selection based on energy levels (individuals with energy <= 0 die).
+    
+    This selection method removes any individual whose energy has been depleted.
+    Population size will fluctuate naturally based on energy dynamics.
+    
+    Args:
+        population: Current population
+        target_size: Target population size (ignored in this method)
+        
+    Returns:
+        List of indices to keep (individuals with energy > 0)
+    """
+    survivors = []
+    deaths = []
+    
+    for i, ind in enumerate(population):
+        if ind.energy > 0:
+            survivors.append(i)
+        else:
+            deaths.append(i)
+    
+    print(f"    Energy-based death: {len(deaths)} died (energy depleted), {len(survivors)} survived")
+    print(f"    Population change: {len(population)} → {len(survivors)} (no size enforcement)")
+    
+    if survivors:
+        energy_values = [population[i].energy for i in survivors]
+        print(f"    Survivor energy: min={min(energy_values):.1f}, max={max(energy_values):.1f}, avg={np.mean(energy_values):.1f}")
     
     return survivors
