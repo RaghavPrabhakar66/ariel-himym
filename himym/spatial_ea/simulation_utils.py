@@ -76,7 +76,8 @@ def generate_spawn_positions(
 def spawn_population_in_world(
     population: list[SpatialIndividual],
     positions: list[np.ndarray],
-    world_size: list[float]
+    world_size: list[float],
+    orientations: list[float] | None = None
 ) -> tuple[SimpleFlatWorld, mujoco.MjModel, mujoco.MjData, list[Any]]:
     """
     Spawn a population of robots in a simulation world.
@@ -85,6 +86,8 @@ def spawn_population_in_world(
         population: List of individuals to spawn
         positions: List of spawn positions
         world_size: Size of world [width, height]
+        orientations: List of yaw angles (in radians) for initial robot orientations. 
+                     If None, robots spawn with default orientation (0 radians).
         
     Returns:
         Tuple of (world, model, data, robots)
@@ -104,6 +107,32 @@ def spawn_population_in_world(
     # Compile world
     model = world.spec.compile()
     data = mujoco.MjData(model)
+    
+    # Set random orientations if provided
+    if orientations is not None:
+        for i in range(len(population)):
+            # Find the freejoint qpos indices for this robot
+            # Each freejoint has 7 DOFs: position (3) + quaternion (4)
+            joint_name = f"robot-{i}"
+            joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+            
+            if joint_id >= 0:
+                qpos_addr = model.jnt_qposadr[joint_id]
+                
+                # Keep position as is (first 3 values)
+                # Set quaternion for rotation around z-axis (yaw)
+                yaw = orientations[i]
+                # Quaternion for rotation around z-axis: [cos(yaw/2), 0, 0, sin(yaw/2)]
+                qw = np.cos(yaw / 2)
+                qx = 0.0
+                qy = 0.0
+                qz = np.sin(yaw / 2)
+                
+                # Set quaternion (qpos indices 3-6 for freejoint)
+                data.qpos[qpos_addr + 3] = qw
+                data.qpos[qpos_addr + 4] = qx
+                data.qpos[qpos_addr + 5] = qy
+                data.qpos[qpos_addr + 6] = qz
     
     mujoco.mj_forward(model, data)  # Forward simulate to initialize positions
     
@@ -225,12 +254,14 @@ def create_mating_controller(
     num_joints: int,
     control_clip_min: float,
     control_clip_max: float,
-    fitness_values: list[float],
+    movement_bias: str = "nearest_neighbor",
     world_size: list[float] | None = None,
-    use_periodic_boundaries: bool = False
+    use_periodic_boundaries: bool = False,
+    mating_zone_centers: list[tuple[float, float]] | None = None,
+    mating_zone_radius: float = 3.0
 ):
     """
-    Create a controller that biases movement towards attractive neighbors.
+    Create a controller that biases movement based on the specified strategy.
     
     Args:
         population: List of individuals
@@ -238,16 +269,23 @@ def create_mating_controller(
         num_joints: Number of joints per robot
         control_clip_min: Minimum control value
         control_clip_max: Maximum control value
-        fitness_values: Fitness scores for calculating attractiveness
+        movement_bias: Movement bias strategy - "nearest_neighbor", "nearest_zone", or "none"
         world_size: World dimensions [width, height, z] for periodic boundaries
         use_periodic_boundaries: Whether to use periodic distance calculations
+        mating_zone_centers: List of mating zone center coordinates for zone-biased movement
+        mating_zone_radius: Radius of mating zones
         
     Returns:
         Controller function
     """
-    # Calculate fitness-based attractiveness
-    max_fitness = max(fitness_values) if max(fitness_values) > 0 else 1.0
-    attractiveness = [f / max_fitness for f in fitness_values]
+    # Validate configuration
+    if movement_bias == "nearest_zone":
+        if mating_zone_centers is None or len(mating_zone_centers) == 0:
+            raise ValueError(
+                "movement_bias is set to 'nearest_zone' but no mating zone centers were provided. "
+                "Either set pairing_method to 'mating_zone' to initialize zones, or change movement_bias."
+            )
+    
     num_spawned_robots = len(tracked_geoms)
     
     def controller(model: mujoco.MjModel, data: mujoco.MjData) -> None:
@@ -255,55 +293,92 @@ def create_mating_controller(
             individual = population[robot_idx]
             current_pos = tracked_geoms[robot_idx].xpos.copy()
             
-            # Find most attractive neighbor
-            best_neighbor_idx = None
-            best_score = -1
-            min_dist = float('inf')
+            # Calculate directional bias based on movement_bias strategy
+            bias_direction = None
             
-            for other_idx in range(min(num_spawned_robots, len(population))):
-                if other_idx == robot_idx:
-                    continue
+            if movement_bias == "nearest_neighbor":
+                # Find nearest neighbor (distance only, no fitness)
+                min_dist = float('inf')
+                nearest_idx = None
                 
-                other_pos = tracked_geoms[other_idx].xpos.copy()
-                
-                # Calculate distance (periodic or direct)
-                if use_periodic_boundaries and world_size is not None:
-                    from periodic_boundary_utils import periodic_distance
-                    distance = periodic_distance(
-                        current_pos, other_pos, (world_size[0], world_size[1])
-                    )
-                else:
-                    distance = np.linalg.norm(current_pos - other_pos)
-                
-                # Score = attractiveness / distance (prefer close + fit partners)
-                if distance > 0.1:  # Avoid division by zero
-                    score = attractiveness[other_idx] / distance
-                    if score > best_score:
-                        best_score = score
-                        best_neighbor_idx = other_idx
-                        min_dist = distance
-            
-            # Apply control with bias towards attractive neighbor
-            for j in range(num_joints):
-                ctrl_idx = robot_idx * num_joints + j
-                
-                # Calculate directional bias if found attractive neighbor
-                bias = 0.0
-                if best_neighbor_idx is not None and min_dist > 0.5:
-                    neighbor_pos = tracked_geoms[best_neighbor_idx].xpos.copy()
+                for other_idx in range(min(num_spawned_robots, len(population))):
+                    if other_idx == robot_idx:
+                        continue
                     
-                    # Calculate direction (periodic or direct)
+                    other_pos = tracked_geoms[other_idx].xpos.copy()
+                    
+                    # Calculate distance (periodic or direct)
+                    if use_periodic_boundaries and world_size is not None:
+                        from periodic_boundary_utils import periodic_distance
+                        distance = periodic_distance(
+                            current_pos, other_pos, (world_size[0], world_size[1])
+                        )
+                    else:
+                        distance = np.linalg.norm(current_pos - other_pos)
+                    
+                    if distance < min_dist and distance > 0.1:  # Avoid selecting self
+                        min_dist = distance
+                        nearest_idx = other_idx
+                
+                # Calculate direction to nearest neighbor
+                if nearest_idx is not None and min_dist > 0.5:
+                    neighbor_pos = tracked_geoms[nearest_idx].xpos.copy()
+                    
                     if use_periodic_boundaries and world_size is not None:
                         from periodic_boundary_utils import periodic_displacement
-                        direction_2d = periodic_displacement(
+                        bias_direction = periodic_displacement(
                             current_pos, neighbor_pos, (world_size[0], world_size[1])
                         )
                     else:
                         direction = neighbor_pos - current_pos
-                        direction_2d = np.array([direction[0], direction[1]])
+                        bias_direction = np.array([direction[0], direction[1]])
+            
+            elif movement_bias == "nearest_zone":
+                # Find nearest mating zone center
+                if mating_zone_centers is not None and len(mating_zone_centers) > 0:
+                    min_dist_to_zone = float('inf')
+                    nearest_zone_center = None
                     
-                    # Simple directional bias scaled by neighbor's attractiveness
-                    bias = 0.2 * attractiveness[best_neighbor_idx] * np.sign(direction_2d[j % 2])
+                    for zone_center in mating_zone_centers:
+                        zone_pos = np.array([zone_center[0], zone_center[1], current_pos[2]])
+                        
+                        # Calculate distance to zone (periodic or direct)
+                        if use_periodic_boundaries and world_size is not None:
+                            from periodic_boundary_utils import periodic_distance
+                            distance = periodic_distance(
+                                current_pos, zone_pos, (world_size[0], world_size[1])
+                            )
+                        else:
+                            distance = np.linalg.norm(current_pos - zone_pos)
+                        
+                        if distance < min_dist_to_zone:
+                            min_dist_to_zone = distance
+                            nearest_zone_center = zone_pos
+                    
+                    # Calculate direction to nearest zone (only if outside zone radius)
+                    if nearest_zone_center is not None and min_dist_to_zone > mating_zone_radius:
+                        if use_periodic_boundaries and world_size is not None:
+                            from periodic_boundary_utils import periodic_displacement
+                            bias_direction = periodic_displacement(
+                                current_pos, nearest_zone_center, (world_size[0], world_size[1])
+                            )
+                        else:
+                            direction = nearest_zone_center - current_pos
+                            bias_direction = np.array([direction[0], direction[1]])
+            
+            elif movement_bias == "none":
+                # No bias - pure sinusoidal movement
+                bias_direction = None
+            
+            # Apply control with calculated bias
+            for j in range(num_joints):
+                ctrl_idx = robot_idx * num_joints + j
+                
+                # Calculate joint-specific bias
+                bias = 0.0
+                if bias_direction is not None:
+                    # Simple directional bias based on x/y component
+                    bias = 0.2 * np.sign(bias_direction[j % 2])
                 
                 # Apply sinusoidal control with bias
                 apply_sinusoidal_control(

@@ -37,19 +37,7 @@ class EAConfig:
     def num_generations(self) -> int:
         return self._config['population']['num_generations']
     
-    @property
-    def maintain_positions(self) -> bool:
-        return self._config['population'].get('maintain_positions', True)
-    
     # Selection Parameters
-    @property
-    def tournament_size(self) -> int:
-        return self._config['selection']['tournament_size']
-    
-    @property
-    def elitism(self) -> bool:
-        return self._config['selection']['elitism']
-    
     @property
     def pairing_radius(self) -> float:
         return self._config['selection'].get('pairing_radius', 2.0)
@@ -70,14 +58,50 @@ class EAConfig:
     def pairing_method(self) -> str:
         return self._config['selection'].get('pairing_method', 'proximity_fitness')
     
+    @property
+    def mating_zone_center(self) -> list[float]:
+        """Center coordinates (x, y) of the mating zone."""
+        return self._config['selection'].get('mating_zone_center', [0.0, 0.0])
+    
+    @property
+    def mating_zone_radius(self) -> float:
+        """Radius of the mating zone circle."""
+        return self._config['selection'].get('mating_zone_radius', 3.0)
+    
+    @property
+    def num_mating_zones(self) -> int:
+        """Number of randomly placed mating zones."""
+        return self._config['selection'].get('num_mating_zones', 1)
+    
+    @property
+    def dynamic_mating_zones(self) -> bool:
+        """Whether mating zones change position over time."""
+        return self._config['selection'].get('dynamic_mating_zones', False)
+    
+    @property
+    def zone_change_interval(self) -> int:
+        """Generations between zone position changes (for dynamic zones)."""
+        return self._config['selection'].get('zone_change_interval', 5)
+    
+    @property
+    def min_zone_distance(self) -> float:
+        """Minimum distance between zone centers (in zone radii units)."""
+        return self._config['selection'].get('min_zone_distance', 2.0)
+    
+    @property
+    def movement_bias(self) -> str:
+        """Movement bias during mating phase: 'nearest_neighbor', 'nearest_zone', or 'none'."""
+        return self._config['selection'].get('movement_bias', 'nearest_neighbor')
+    
+    @property
+    def max_age(self) -> int:
+        """Maximum age for probabilistic_age selection (death probability = age/max_age)."""
+        return self._config['selection'].get('max_age', 10)
+    
     # Crossover Parameters
     @property
     def crossover_rate(self) -> float:
         return self._config['crossover']['rate']
-    
-    @property
-    def crossover_type(self) -> str:
-        return self._config['crossover']['type']
     
     # Mutation Parameters
     @property
@@ -158,10 +182,6 @@ class EAConfig:
     
     # Multi-Robot Parameters
     @property
-    def num_demo_robots(self) -> int:
-        return self._config['multi_robot']['num_robots']
-    
-    @property
     def world_size(self) -> list[float]:
         return self._config['multi_robot']['world_size']
     
@@ -209,16 +229,17 @@ class EAConfig:
     
     # Logging
     @property
-    def print_individual_fitness(self) -> bool:
-        return self._config['logging']['print_individual_fitness']
-    
-    @property
     def print_generation_stats(self) -> bool:
         return self._config['logging']['print_generation_stats']
     
     @property
     def print_final_genotype(self) -> bool:
         return self._config['logging']['print_final_genotype']
+    
+    # Video Recording
+    @property
+    def record_generation_videos(self) -> bool:
+        return self._config['video'].get('record_generation_videos', False)
     
     def get_raw_config(self) -> dict[str, Any]:
         """Return the raw configuration dictionary."""

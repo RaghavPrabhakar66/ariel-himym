@@ -75,8 +75,66 @@ class SpatialEA:
         # Store current positions for cross-generation persistence
         self.current_positions: list[np.ndarray] = []
         
+        # Store current orientations (yaw angles in radians)
+        self.current_orientations: list[float] = []
+        
         # Counter for assigning unique IDs to individuals
         self.next_unique_id = 0
+        
+        # Mating zone management
+        self.current_zone_centers: list[tuple[float, float]] = []
+        self._initialize_mating_zones()
+    
+    def _initialize_mating_zones(self) -> None:
+        """Initialize mating zone positions."""
+        from parent_selection import generate_random_zone_centers
+        
+        # Initialize zones if needed for pairing or movement bias
+        if config.pairing_method != "mating_zone" and config.movement_bias != "nearest_zone":
+            return
+        
+        if config.num_mating_zones == 1:
+            # Use configured center for single zone
+            self.current_zone_centers = [tuple(config.mating_zone_center)]
+        else:
+            # Generate random positions for multiple zones
+            self.current_zone_centers = generate_random_zone_centers(
+                num_zones=config.num_mating_zones,
+                world_size=(config.world_size[0], config.world_size[1]),
+                zone_radius=config.mating_zone_radius,
+                min_zone_distance=config.min_zone_distance
+            )
+        
+        print(f"  Initialized {len(self.current_zone_centers)} mating zone(s)")
+        if config.pairing_method == "mating_zone":
+            print(f"  Zones used for: pairing")
+        if config.movement_bias == "nearest_zone":
+            print(f"  Zones used for: movement bias")
+        if config.dynamic_mating_zones:
+            print(f"  Zones will change every {config.zone_change_interval} generations")
+    
+    def _update_mating_zones(self) -> None:
+        """Update mating zone positions if dynamic zones are enabled."""
+        from parent_selection import generate_random_zone_centers
+        
+        # Only update zones if they're being used
+        if config.pairing_method != "mating_zone" and config.movement_bias != "nearest_zone":
+            return
+        
+        if not config.dynamic_mating_zones:
+            return
+        
+        # Check if it's time to change zones
+        if self.generation > 0 and self.generation % config.zone_change_interval == 0:
+            print(f"\n  UPDATING MATING ZONES (Generation {self.generation})")
+            self.current_zone_centers = generate_random_zone_centers(
+                num_zones=config.num_mating_zones,
+                world_size=(config.world_size[0], config.world_size[1]),
+                zone_radius=config.mating_zone_radius,
+                min_zone_distance=config.min_zone_distance
+            )
+            
+            print(f"  New zone centers: {self.current_zone_centers}")
     
     def create_individual(self) -> SpatialIndividual:
         """Create a new individual with random genotype."""
@@ -109,6 +167,7 @@ class SpatialEA:
             print(f"  WARNING: Position count ({len(self.current_positions)}) != population size ({self.population_size})")
             print(f"  Regenerating all positions...")
             self.current_positions = []
+            self.current_orientations = []
         
         # Determine spawn positions
         if len(self.current_positions) == self.population_size:
@@ -124,11 +183,21 @@ class SpatialEA:
                 min_spawn_distance=config.min_spawn_distance
             )
         
+        # Determine spawn orientations
+        if len(self.current_orientations) == self.population_size:
+            print(f"  Using orientations from previous generation")
+            orientations = self.current_orientations.copy()
+        else:
+            print(f"  Generating new random spawn orientations")
+            # Random yaw angles between 0 and 2*pi
+            orientations = [np.random.uniform(0, 2 * np.pi) for _ in range(self.population_size)]
+        
         # Spawn robots
         self.world, self.model, self.data, self.robots = spawn_population_in_world(
             population=self.population,
             positions=positions,
-            world_size=config.world_size
+            world_size=config.world_size,
+            orientations=orientations
         )
         
         # Track robot geoms
@@ -158,8 +227,7 @@ class SpatialEA:
     def mating_movement_phase(
         self, 
         duration: float = 60.0, 
-        save_trajectories: bool = True,
-        record_video: bool = False
+        save_trajectories: bool = True
     ) -> None:
         """
         Run mating movement phase where robots move towards attractive neighbors.
@@ -167,7 +235,6 @@ class SpatialEA:
         Args:
             duration: Duration of movement phase
             save_trajectories: Whether to save trajectory visualization
-            record_video: Whether to record video
         """
         print(f"  MATING MOVEMENT PHASE ({duration}s)")
         
@@ -187,15 +254,17 @@ class SpatialEA:
             num_joints=self.num_joints,
             control_clip_min=config.control_clip_min,
             control_clip_max=config.control_clip_max,
-            fitness_values=fitness_values,
+            movement_bias=config.movement_bias,
             world_size=config.world_size,
-            use_periodic_boundaries=config.use_periodic_boundaries
+            use_periodic_boundaries=config.use_periodic_boundaries,
+            mating_zone_centers=self.current_zone_centers if self.current_zone_centers else None,
+            mating_zone_radius=config.mating_zone_radius
         )
         
         # Set up video recording if requested
         video_recorder = None
         renderer = None
-        if record_video:
+        if config.record_generation_videos:
             video_name = f"generation_{self.generation + 1:03d}_mating_movement"
             video_recorder = VideoRecorder(
                 file_name=video_name,
@@ -238,7 +307,7 @@ class SpatialEA:
             print(f"    Mating step {step + 1}/{sim_steps}", end='\r')
             
             # Record video frame if enabled
-            if record_video and renderer is not None and video_recorder is not None:
+            if config.record_generation_videos and renderer is not None and video_recorder is not None:
                 if step % steps_per_frame == 0:
                     renderer.update_scene(self.data, scene_option=scene_option)
                     video_recorder.write(frame=renderer.render())
@@ -251,7 +320,7 @@ class SpatialEA:
         print(f"  MATING MOVEMENT COMPLETE")
         
         # Clean up video recording
-        if record_video and video_recorder is not None:
+        if config.record_generation_videos and video_recorder is not None:
             video_recorder.release()
             print(f"  Video saved: {video_recorder.frame_count} frames")
             if renderer is not None:
@@ -259,12 +328,33 @@ class SpatialEA:
         
         # Update positions for next generation
         self.current_positions = []
+        self.current_orientations = []
         for i in range(num_spawned):
             pos = self.tracked_geoms[i].xpos.copy()
             self.current_positions.append(pos)
+            
+            # Extract orientation (yaw) from quaternion
+            joint_name = f"robot-{i}"
+            joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+            if joint_id >= 0:
+                qpos_addr = self.model.jnt_qposadr[joint_id]
+                # Get quaternion from qpos (indices 3-6)
+                qw = self.data.qpos[qpos_addr + 3]
+                qx = self.data.qpos[qpos_addr + 4]
+                qy = self.data.qpos[qpos_addr + 5]
+                qz = self.data.qpos[qpos_addr + 6]
+                
+                # Convert quaternion to yaw angle (rotation around z-axis)
+                # yaw = atan2(2*(qw*qz + qx*qy), 1 - 2*(qy^2 + qz^2))
+                yaw = np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy**2 + qz**2))
+                self.current_orientations.append(yaw)
+            else:
+                # Fallback if joint not found
+                self.current_orientations.append(0.0)
         
         print(f"  Updated positions for next generation")
         print(f"    Tracked {len(self.current_positions)} positions")
+        print(f"    Tracked {len(self.current_orientations)} orientations")
         
         # Save trajectory visualization
         if save_trajectories:
@@ -279,27 +369,27 @@ class SpatialEA:
                 world_size=config.world_size,
                 robot_size=config.robot_size,
                 save_path=save_path,
-                use_periodic_boundaries=config.use_periodic_boundaries
+                use_periodic_boundaries=config.use_periodic_boundaries,
+                mating_zone_centers=self.current_zone_centers if config.pairing_method == "mating_zone" else None,
+                mating_zone_radius=config.mating_zone_radius if config.pairing_method == "mating_zone" else None,
+                pairing_method=config.pairing_method
             )
     
-    def create_next_generation(self, record_video: bool = False) -> None:
+    def create_next_generation(self) -> None:
         """
         Create next generation through movement-based pairing and reproduction.
-        
-        Args:
-            record_video: Whether to record video of mating movement
         """
         print(f"  Creating next generation with movement-based selection...")
         
         # Allow robots to move towards partners
         self.mating_movement_phase(
             duration=config.simulation_time, 
-            save_trajectories=True,
-            record_video=record_video
+            save_trajectories=True
         )
         
         new_population: list[SpatialIndividual] = []
         new_positions: list[np.ndarray] = []
+        new_orientations: list[float] = []
         
         # Find pairs based on selected pairing method
         pairs, paired_indices = find_pairs(
@@ -309,7 +399,8 @@ class SpatialEA:
             pairing_radius=config.pairing_radius,
             world_size=(config.world_size[0], config.world_size[1]),
             use_periodic_boundaries=config.use_periodic_boundaries,
-            tournament_size=config.tournament_size
+            mating_zone_centers=self.current_zone_centers if self.current_zone_centers else [tuple(config.mating_zone_center)],
+            mating_zone_radius=config.mating_zone_radius
         )
         
         print(f"  Created {len(pairs)} pairs from {self.population_size} robots")
@@ -367,19 +458,27 @@ class SpatialEA:
             
             new_population.append(child1)
             new_positions.append(pair_positions[pair_idx][0])
+            new_orientations.append(np.random.uniform(0, 2 * np.pi))
             
             new_population.append(child2)
             new_positions.append(pair_positions[pair_idx][1])
+            new_orientations.append(np.random.uniform(0, 2 * np.pi))
         
         # Extend population with offspring
         self.population.extend(new_population)
         self.current_positions.extend(new_positions)
+        self.current_orientations.extend(new_orientations)
         
         # Verify consistency
         if len(self.population) != len(self.current_positions):
             print(f"  ERROR: Population size ({len(self.population)}) != "
                   f"Position count ({len(self.current_positions)})")
             raise RuntimeError("Population and position arrays out of sync!")
+        
+        if len(self.population) != len(self.current_orientations):
+            print(f"  ERROR: Population size ({len(self.population)}) != "
+                  f"Orientation count ({len(self.current_orientations)})")
+            raise RuntimeError("Population and orientation arrays out of sync!")
         
         # Update population size before selection
         old_size = self.population_size
@@ -390,21 +489,26 @@ class SpatialEA:
         print(f"  Position tracking updated: {len(self.current_positions)} positions")
         print(f"  Paired individuals: {len(paired_indices)} out of {old_size}")
         
+        # Show fitness statistics before selection
+        fitness_values = [ind.fitness for ind in self.population]
+        print(f"  Pre-selection fitness range: {min(fitness_values):.4f} to {max(fitness_values):.4f}")
+        print(f"  Pre-selection fitness variation: {max(fitness_values) - min(fitness_values):.4f}")
+        
         # Apply selection to manage population size
-        self.population, self.current_positions, self.population_size = apply_selection(
+        self.population, self.current_positions, self.population_size, self.current_orientations = apply_selection(
             population=self.population,
             current_positions=self.current_positions,
             method=config.selection_method,
             target_size=config.max_population_size,
-            current_generation=self.generation
+            current_generation=self.generation,
+            current_orientations=self.current_orientations,
+            paired_indices=paired_indices,
+            max_age=config.max_age
         )
     
-    def run_evolution(self, record_generation_videos: bool = False) -> SpatialIndividual:
+    def run_evolution(self) -> SpatialIndividual:
         """
         Run the evolutionary algorithm.
-        
-        Args:
-            record_generation_videos: Whether to record video for each generation
             
         Returns:
             Best individual found
@@ -415,7 +519,7 @@ class SpatialEA:
         print(f"Population size: {self.population_size}")
         print(f"Generations: {self.num_generations}")
         print(f"Robot joints: {self.num_joints}")
-        if record_generation_videos:
+        if config.record_generation_videos:
             print(f"Video recording: ENABLED (one video per generation)")
         print("=" * 60)
         
@@ -428,6 +532,9 @@ class SpatialEA:
             print(f"\n{'='*60}")
             print(f"Generation {gen + 1}/{self.num_generations}")
             print(f"{'='*60}")
+            
+            # Update mating zones if dynamic
+            self._update_mating_zones()
             
             # Spawn population in simulation
             self.spawn_population()
@@ -450,13 +557,12 @@ class SpatialEA:
             
             # Create next generation (except for last generation)
             if gen < self.num_generations - 1:
-                self.create_next_generation(record_video=record_generation_videos)
+                self.create_next_generation()
             else:
                 # Run mating movement to capture final positions
                 self.mating_movement_phase(
                     duration=config.simulation_time, 
-                    save_trajectories=True,
-                    record_video=record_generation_videos
+                    save_trajectories=True
                 )
         
         print(f"\n{'='*60}")
@@ -585,9 +691,8 @@ def main():
         num_joints=num_joints
     )
     
-    # Run evolution with optional video recording for each generation
-    # Set to True to record video for each generation's mating movement phase
-    spatial_ea.run_evolution(record_generation_videos=False)
+    # Run evolution - video recording controlled by ea_config.yaml
+    spatial_ea.run_evolution()
     
     # Demonstrate results
     spatial_ea.demonstrate_best()

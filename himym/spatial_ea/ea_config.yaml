@@ -4,23 +4,29 @@
 # Population and Evolution Parameters
 population:
   size: 10                    # Number of individuals in the population
-  num_generations: 50        # Total number of generations to evolve
-  maintain_positions: true    # Whether to maintain robot positions across generations
+  num_generations: 6        # Total number of generations to evolve
 
 # Selection Parameters
 selection:
-  tournament_size: 3          # Number of individuals competing in tournament selection
-  elitism: true               # Whether to keep the best individual in next generation
-  pairing_radius: 5.0      # Maximum distance for pairing robots (meters)
+  pairing_radius: 6.0      # Maximum distance for pairing robots (meters)
   offspring_radius: 1.5      # Radius around parents where offspring spawn (meters)
   max_population_size: 20     # Maximum population size before selection occurs
-  selection_method: "parents_die"  # Selection method: "parents_die", "fitness_based", "age_based", "spatial_density"
-  pairing_method: "proximity_fitness"  # Pairing method: "proximity_fitness", "random", "fitness_proportional", "tournament"
+  selection_method: "probabilistic_age"  # Selection method: "parents_die", "fitness_based", "age_based", "probabilistic_age"
+  pairing_method: "mating_zone"  # Pairing method: "proximity_pairing", "random", "mating_zone"
+  movement_bias: "nearest_zone"  # Movement bias during mating phase: "nearest_neighbor", "nearest_zone", "none"
+  max_age: 10                 # Maximum age for probabilistic_age selection (death probability = age/max_age)
+  
+  # Mating Zone Configuration
+  mating_zone_center: [12.5, 12.5]  # Center coordinates (x, y) of the primary mating zone (used if num_zones=1 and not dynamic)
+  mating_zone_radius: 1.0     # Radius of the mating zone circle (meters)
+  num_mating_zones: 1         # Number of randomly placed mating zones (1 = single zone at mating_zone_center)
+  dynamic_mating_zones: true # Whether mating zones change position over time
+  zone_change_interval: 2     # Generations between zone position changes (only if dynamic_mating_zones=true)
+  min_zone_distance: 2.0      # Minimum distance between zone centers when using multiple zones (in zone radii units)
 
 # Crossover Parameters
 crossover:
   rate: 1.0                   # Probability of crossover (1.0 = always crossover)
-  type: "one_point"           # Type of crossover: "one_point"
 
 # Mutation Parameters
 mutation:
@@ -56,7 +62,6 @@ simulation:
 
 # Multi-Robot Demonstration
 multi_robot:
-  num_robots: 5               # Number of top individuals to demonstrate
   world_size: [25, 25, 0.1]     # World dimensions [x, y, z]
   spawn_area:
     x_min: 0.1                # Minimum x spawn position
@@ -75,6 +80,9 @@ output:
 
 # Logging
 logging:
-  print_individual_fitness: true    # Print fitness of each individual during evaluation
   print_generation_stats: true      # Print generation statistics (best, average)
   print_final_genotype: true        # Print the best evolved genotype at the end
+
+# Video Recording
+video:
+  record_generation_videos: false   # Whether to record videos of mating movement for each generation

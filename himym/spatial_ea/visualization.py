@@ -54,7 +54,10 @@ def save_mating_trajectories(
     world_size: list[float],
     robot_size: float,
     save_path: str,
-    use_periodic_boundaries: bool = False
+    use_periodic_boundaries: bool = False,
+    mating_zone_centers: list[tuple[float, float]] | None = None,
+    mating_zone_radius: float | None = None,
+    pairing_method: str | None = None
 ) -> None:
     """
     Save visualization of robot trajectories during mating movement.
@@ -70,6 +73,9 @@ def save_mating_trajectories(
         robot_size: Approximate robot diameter for visualization
         save_path: Path to save the figure
         use_periodic_boundaries: Whether to handle periodic boundary wrapping in visualization
+        mating_zone_centers: Optional list of (x, y) centers of mating zones for visualization
+        mating_zone_radius: Optional radius of mating zones for visualization
+        pairing_method: Optional pairing method name for display
     """
     fig, ax = plt.subplots(figsize=(12, 12))
     
@@ -92,6 +98,34 @@ def save_mating_trajectories(
         alpha=0.1
     )
     ax.add_patch(world_rect)
+    
+    # Draw mating zones if provided
+    if mating_zone_centers is not None and mating_zone_radius is not None:
+        for i, zone_center in enumerate(mating_zone_centers):
+            mating_zone_circle = patches.Circle(
+                zone_center,
+                mating_zone_radius,
+                linewidth=3,
+                edgecolor='red',
+                facecolor='lightcoral',
+                alpha=0.2,
+                linestyle='--',
+                label='Mating Zone' if i == 0 else None  # Only label first zone
+            )
+            ax.add_patch(mating_zone_circle)
+            
+            # Mark the center of each mating zone
+            ax.plot(
+                zone_center[0],
+                zone_center[1],
+                marker='*',
+                color='red',
+                markersize=15,
+                markeredgecolor='darkred',
+                markeredgewidth=2,
+                zorder=5,
+                label='Zone Center' if i == 0 else None  # Only label first zone
+            )
     
     # Get unique IDs from population
     unique_ids = [ind.unique_id for ind in population if ind.unique_id is not None]
@@ -199,6 +233,13 @@ def save_mating_trajectories(
     title = f'Mating Movement Trajectories - Generation {generation}\n'
     title += f'Population: {population_size} | Duration: {simulation_time}s\n'
     title += f'Fitness Range: {min_fitness:.3f} - {max_fitness:.3f}\n'
+    if pairing_method:
+        title += f'Pairing Method: {pairing_method}\n'
+    if mating_zone_centers is not None and mating_zone_radius is not None:
+        if len(mating_zone_centers) == 1:
+            title += f'Mating Zone: Center ({mating_zone_centers[0][0]:.1f}, {mating_zone_centers[0][1]:.1f}), Radius {mating_zone_radius:.1f}m\n'
+        else:
+            title += f'Mating Zones: {len(mating_zone_centers)} zones, Radius {mating_zone_radius:.1f}m each\n'
     if use_periodic_boundaries:
         title += f'Periodic Boundaries: ENABLED (trajectories split at wraps)\n'
     title += f'Colors: Unique Individual IDs | Numbers: Individual IDs | Small text: Fitness'
@@ -233,6 +274,31 @@ def save_mating_trajectories(
             label='Trajectory (colored by individual)'
         ),
     ]
+    
+    # Add mating zones to legend if they exist
+    if mating_zone_centers is not None and mating_zone_radius is not None:
+        legend_elements.extend([
+            patches.Patch(
+                facecolor='lightcoral',
+                edgecolor='red',
+                linewidth=3,
+                linestyle='--',
+                alpha=0.2,
+                label=f'Mating Zone{"s" if len(mating_zone_centers) > 1 else ""} (only robots inside can mate)'
+            ),
+            Line2D(
+                [0], [0],
+                marker='*',
+                color='w',
+                markerfacecolor='red',
+                markersize=15,
+                markeredgecolor='darkred',
+                markeredgewidth=2,
+                linestyle='',
+                label='Mating Zone Center'
+            )
+        ])
+    
     ax.legend(handles=legend_elements, loc='upper right', fontsize=10, framealpha=0.9)
     
     plt.tight_layout()
@@ -281,3 +347,176 @@ def _calculate_marker_size(
     marker_size_points = robot_size_inches * 72
     
     return marker_size_points
+
+
+def plot_mating_zone(
+    world_size: list[float],
+    mating_zone_centers: list[tuple[float, float]],
+    mating_zone_radius: float,
+    save_path: str,
+    robot_positions: list[tuple[float, float]] | None = None,
+    use_periodic_boundaries: bool = False
+) -> None:
+    """
+    Create a standalone visualization of the mating zones.
+    
+    Useful for understanding zone placement and coverage. Supports multiple zones.
+    
+    Args:
+        world_size: Size of world [width, height]
+        mating_zone_centers: List of (x, y) centers of mating zones
+        mating_zone_radius: Radius of mating zones
+        save_path: Path to save the figure
+        robot_positions: Optional list of (x, y) robot positions to show
+        use_periodic_boundaries: Whether periodic boundaries are enabled
+    """
+    fig, ax = plt.subplots(figsize=(12, 12))
+    
+    # Set axis limits
+    ax.set_xlim(-0.2, world_size[0] + 0.2)
+    ax.set_ylim(-0.2, world_size[1] + 0.2)
+    ax.set_aspect('equal')
+    
+    # Draw world boundaries
+    world_rect = patches.Rectangle(
+        (0, 0), 
+        world_size[0], 
+        world_size[1],
+        linewidth=2, 
+        edgecolor='black', 
+        facecolor='lightgray',
+        alpha=0.1
+    )
+    ax.add_patch(world_rect)
+    
+    # Draw mating zones
+    for i, zone_center in enumerate(mating_zone_centers):
+        mating_zone_circle = patches.Circle(
+            zone_center,
+            mating_zone_radius,
+            linewidth=3,
+            edgecolor='red',
+            facecolor='lightcoral',
+            alpha=0.3,
+            linestyle='--',
+            label='Mating Zone' if i == 0 else None
+        )
+        ax.add_patch(mating_zone_circle)
+        
+        # Mark the center of each mating zone
+        ax.plot(
+            zone_center[0],
+            zone_center[1],
+            marker='*',
+            color='red',
+            markersize=20,
+            markeredgecolor='darkred',
+            markeredgewidth=2,
+            zorder=5,
+            label='Zone Center' if i == 0 else None
+        )
+    
+    # Plot robot positions if provided
+    if robot_positions:
+        for i, (x, y) in enumerate(robot_positions):
+            # Check if robot is in any zone
+            in_zone = False
+            for zone_center in mating_zone_centers:
+                distance = np.sqrt((x - zone_center[0])**2 + (y - zone_center[1])**2)
+                if distance <= mating_zone_radius:
+                    in_zone = True
+                    break
+            
+            color = 'green' if in_zone else 'gray'
+            marker = 'o' if in_zone else 'x'
+            label = 'In Zone' if i == 0 and in_zone else ('Outside Zone' if i == 0 and not in_zone else None)
+            
+            ax.plot(
+                x, y,
+                marker=marker,
+                color=color,
+                markersize=10,
+                markeredgecolor='black',
+                markeredgewidth=1,
+                label=label
+            )
+            
+            # Add robot index
+            ax.text(x, y + 0.3, str(i), ha='center', va='bottom', fontsize=8, fontweight='bold')
+    
+    # Calculate zone statistics
+    zone_area = np.pi * mating_zone_radius**2
+    world_area = world_size[0] * world_size[1]
+    
+    # Plot settings
+    ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+    ax.set_xlabel('X Position (m)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Y Position (m)', fontsize=12, fontweight='bold')
+    
+    title = 'Mating Zone Configuration\n'
+    if len(mating_zone_centers) == 1:
+        title += f'Zone Center: ({mating_zone_centers[0][0]:.1f}, {mating_zone_centers[0][1]:.1f})\n'
+    else:
+        title += f'Number of Zones: {len(mating_zone_centers)}\n'
+    title += f'Zone Radius: {mating_zone_radius:.1f}m | Zone Area: {zone_area:.2f} m² each\n'
+    title += f'Total Zone Area: {zone_area * len(mating_zone_centers):.2f} m²\n'
+    title += f'World Size: {world_size[0]:.1f}m × {world_size[1]:.1f}m | World Area: {world_area:.2f} m²\n'
+    coverage_percent_total = (zone_area * len(mating_zone_centers) / world_area) * 100
+    title += f'Total Zone Coverage: {coverage_percent_total:.1f}% of world\n'
+    if use_periodic_boundaries:
+        title += 'Periodic Boundaries: ENABLED'
+    
+    ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+    
+    # Add legend
+    legend_elements = [
+        patches.Patch(
+            facecolor='lightcoral',
+            edgecolor='red',
+            linewidth=3,
+            linestyle='--',
+            alpha=0.3,
+            label='Mating Zone'
+        ),
+        Line2D(
+            [0], [0],
+            marker='*',
+            color='w',
+            markerfacecolor='red',
+            markersize=20,
+            markeredgecolor='darkred',
+            markeredgewidth=2,
+            linestyle='',
+            label='Zone Center'
+        )
+    ]
+    
+    if robot_positions:
+        legend_elements.extend([
+            Line2D(
+                [0], [0],
+                marker='o',
+                color='w',
+                markerfacecolor='green',
+                markersize=10,
+                markeredgecolor='black',
+                linestyle='',
+                label='Robot In Zone (can mate)'
+            ),
+            Line2D(
+                [0], [0],
+                marker='x',
+                color='gray',
+                markersize=10,
+                markeredgecolor='black',
+                linestyle='',
+                label='Robot Outside Zone (cannot mate)'
+            )
+        ])
+    
+    ax.legend(handles=legend_elements, loc='upper right', fontsize=10, framealpha=0.9)
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Mating zone visualization saved to {save_path}")
+    plt.close()
