@@ -26,6 +26,7 @@ from simulation_utils import (
     track_trajectories,
     update_trajectories
 )
+from visualize_experiment import ExperimentVisualizer
 
 # Import robot and environment
 from ariel.body_phenotypes.robogen_lite.prebuilt_robots.gecko import gecko
@@ -580,6 +581,10 @@ class SpatialEA:
         print(f"Population size: {self.population_size}")
         print(f"Generations: {self.num_generations}")
         print(f"Robot joints: {self.num_joints}")
+        print(f"Max population limit: {config.max_population_limit}")
+        print(f"Min population limit: {config.min_population_limit}")
+        if config.stop_on_limits:
+            print(f"Early stopping: ENABLED (stops if limits reached)")
         if config.record_generation_videos:
             print(f"Video recording: ENABLED (one video per generation)")
         print("=" * 60)
@@ -593,6 +598,36 @@ class SpatialEA:
             print(f"\n{'='*60}")
             print(f"Generation {gen + 1}/{self.num_generations}")
             print(f"{'='*60}")
+            
+            # Check population limits BEFORE processing generation
+            if config.stop_on_limits:
+                if self.population_size >= config.max_population_limit:
+                    print(f"\n{'!'*60}")
+                    print(f"POPULATION LIMIT REACHED!")
+                    print(f"{'!'*60}")
+                    print(f"Population size ({self.population_size}) reached or exceeded maximum limit ({config.max_population_limit})")
+                    print(f"Stopping evolution at generation {gen + 1}")
+                    print(f"{'!'*60}")
+                    self.data_collector.record_early_stop(
+                        gen, 
+                        f"Population reached maximum limit ({config.max_population_limit})",
+                        self.num_generations
+                    )
+                    break
+                
+                if self.population_size < config.min_population_limit:
+                    print(f"\n{'!'*60}")
+                    print(f"POPULATION EXTINCTION!")
+                    print(f"{'!'*60}")
+                    print(f"Population size ({self.population_size}) dropped below minimum limit ({config.min_population_limit})")
+                    print(f"Stopping evolution at generation {gen + 1}")
+                    print(f"{'!'*60}")
+                    self.data_collector.record_early_stop(
+                        gen, 
+                        f"Population extinction (below {config.min_population_limit})",
+                        self.num_generations
+                    )
+                    break
             
             # Record generation start
             self.data_collector.record_generation_start(gen, len(self.population))
@@ -631,6 +666,38 @@ class SpatialEA:
             # Create next generation (except for last generation)
             if gen < self.num_generations - 1:
                 self.create_next_generation()
+                
+                # Check population limits AFTER creating next generation
+                if config.stop_on_limits:
+                    if self.population_size >= config.max_population_limit:
+                        print(f"POPULATION LIMIT REACHED AFTER REPRODUCTION!")
+                        print(f"Population size ({self.population_size}) reached or exceeded maximum limit ({config.max_population_limit})")
+                        print(f"Stopping evolution after generation {gen + 1}")
+                        self.data_collector.record_early_stop(
+                            gen + 1, 
+                            f"Population reached maximum limit after reproduction ({config.max_population_limit})",
+                            self.num_generations
+                        )
+                        # Run final mating movement to capture positions
+                        self.mating_movement_phase(
+                            duration=config.simulation_time, 
+                            save_trajectories=True
+                        )
+                        break
+                    
+                    if self.population_size < config.min_population_limit:
+                        print(f"\n{'!'*60}")
+                        print(f"POPULATION EXTINCTION AFTER SELECTION!")
+                        print(f"{'!'*60}")
+                        print(f"Population size ({self.population_size}) dropped below minimum limit ({config.min_population_limit})")
+                        print(f"Stopping evolution after generation {gen + 1}")
+                        print(f"{'!'*60}")
+                        self.data_collector.record_early_stop(
+                            gen + 1, 
+                            f"Population extinction after selection (below {config.min_population_limit})",
+                            self.num_generations
+                        )
+                        break
             else:
                 # Run mating movement to capture final positions
                 self.mating_movement_phase(
@@ -936,11 +1003,13 @@ def main():
     spatial_ea.run_evolution()
     
     # Demonstrate results
-    spatial_ea.demonstrate_best()
-    spatial_ea.demonstrate_final_population()
+    #spatial_ea.demonstrate_best()
+    #spatial_ea.demonstrate_final_population()
     
     # Plot results
     spatial_ea.plot_fitness_evolution()
+    viz = ExperimentVisualizer('path/to/results.csv')
+    viz.generate_report()
     
     print(f"\n{'='*60}")
     print("ALL TASKS COMPLETE")

@@ -4,7 +4,10 @@
 # Population and Evolution Parameters
 population:
   size: 10                    # Number of individuals in the population
-  num_generations: 6        # Total number of generations to evolve
+  num_generations: 100        # Total number of generations to evolve
+  max_population_limit: 25   # Absolute maximum population (simulation stops if reached)
+  min_population_limit: 1     # Minimum population (simulation stops if population drops below this)
+  stop_on_limits: true        # Whether to stop simulation when limits are reached
 
 # Selection Parameters
 selection:
@@ -25,8 +28,8 @@ selection:
   
   # Mating Zone Configuration
   mating_zone_center: [12.5, 12.5]  # Center coordinates (x, y) of the primary mating zone (used if num_zones=1 and not dynamic)
-  mating_zone_radius: 1.0     # Radius of the mating zone circle (meters)
-  num_mating_zones: 1         # Number of randomly placed mating zones (1 = single zone at mating_zone_center)
+  mating_zone_radius: 4.0     # Radius of the mating zone circle (meters)
+  num_mating_zones: 5         # Number of randomly placed mating zones (1 = single zone at mating_zone_center)
   dynamic_mating_zones: true # Whether mating zones change position over time
   zone_change_interval: 2     # Generations between zone position changes (only if dynamic_mating_zones=true)
   min_zone_distance: 2.0      # Minimum distance between zone centers when using multiple zones (in zone radii units)

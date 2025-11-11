@@ -37,6 +37,21 @@ class EAConfig:
     def num_generations(self) -> int:
         return self._config['population']['num_generations']
     
+    @property
+    def max_population_limit(self) -> int:
+        """Absolute maximum population (simulation stops if reached)."""
+        return self._config['population'].get('max_population_limit', 100)
+    
+    @property
+    def min_population_limit(self) -> int:
+        """Minimum population (simulation stops if population drops below this)."""
+        return self._config['population'].get('min_population_limit', 1)
+    
+    @property
+    def stop_on_limits(self) -> bool:
+        """Whether to stop simulation when population limits are reached."""
+        return self._config['population'].get('stop_on_limits', True)
+    
     # Selection Parameters
     @property
     def pairing_radius(self) -> float:

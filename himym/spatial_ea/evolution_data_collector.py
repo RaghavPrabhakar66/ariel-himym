@@ -77,6 +77,11 @@ class EvolutionDataCollector:
         
         # Event tracking
         self.events: dict[int, list[str]] = {}  # generation -> list of event descriptions
+        
+        # Early stopping information
+        self.stopped_early: bool = False
+        self.stop_reason: str = ""
+        self.planned_generations: int = 0
     
     def record_generation_start(self, generation: int, population_size: int) -> None:
         """Record the start of a generation."""
@@ -216,6 +221,20 @@ class EvolutionDataCollector:
             self.events[generation] = []
         self.events[generation].append(event_description)
     
+    def record_early_stop(self, generation: int, reason: str, planned_generations: int) -> None:
+        """
+        Record that evolution stopped early.
+        
+        Args:
+            generation: Generation at which evolution stopped
+            reason: Reason for early stopping
+            planned_generations: Originally planned number of generations
+        """
+        self.stopped_early = True
+        self.stop_reason = reason
+        self.planned_generations = planned_generations
+        self.add_event(generation, f"EARLY STOP: {reason}")
+    
     def get_summary_stats(self) -> dict[str, Any]:
         """
         Get summary statistics across all generations.
@@ -225,6 +244,9 @@ class EvolutionDataCollector:
         """
         summary = {
             'total_generations': len(self.generations),
+            'planned_generations': self.planned_generations if self.stopped_early else len(self.generations),
+            'stopped_early': self.stopped_early,
+            'stop_reason': self.stop_reason if self.stopped_early else "Completed all generations",
             'run_duration': str(datetime.now() - self.start_time),
             'population': {
                 'initial': self.population_size[0] if self.population_size else 0,
@@ -412,11 +434,16 @@ class EvolutionDataCollector:
         ax.plot(generations, self.population_size, 'b-', linewidth=2, label='Population Size')
         if self.births:
             # Births/deaths start from generation 1 (after first reproduction)
-            birth_gens = generations[1:len(self.births)+1]
-            ax.plot(birth_gens, self.births, 'g--', label='Births', alpha=0.7)
+            # Only plot births/deaths data that corresponds to completed generations
+            num_birth_data = min(len(self.births), len(generations) - 1)
+            if num_birth_data > 0:
+                birth_gens = generations[1:num_birth_data+1]
+                ax.plot(birth_gens, self.births[:num_birth_data], 'g--', label='Births', alpha=0.7)
         if self.deaths:
-            death_gens = generations[1:len(self.deaths)+1]
-            ax.plot(death_gens, self.deaths, 'r--', label='Deaths', alpha=0.7)
+            num_death_data = min(len(self.deaths), len(generations) - 1)
+            if num_death_data > 0:
+                death_gens = generations[1:num_death_data+1]
+                ax.plot(death_gens, self.deaths[:num_death_data], 'r--', label='Deaths', alpha=0.7)
         ax.set_xlabel('Generation')
         ax.set_ylabel('Count')
         ax.set_title('Population Dynamics')
@@ -508,6 +535,18 @@ class EvolutionDataCollector:
             ax.legend(loc='upper left')
             ax2.legend(loc='upper right')
             ax.grid(True, alpha=0.3)
+        
+        # Add early stopping indicator if applicable
+        if self.stopped_early:
+            # Add vertical line at stopping point on all subplots
+            last_gen = generations[-1]
+            for ax_idx in range(len(axes)):
+                ax = axes[ax_idx]
+                ax.axvline(x=last_gen, color='red', linestyle=':', linewidth=2, alpha=0.5)
+                
+            # Add title annotation
+            title_text = f'Evolution Statistics Over Time\n STOPPED EARLY: {self.stop_reason}'
+            fig.suptitle(title_text, fontsize=16, fontweight='bold')
         
         plt.tight_layout()
         plt.savefig(fig_path, dpi=150, bbox_inches='tight')
