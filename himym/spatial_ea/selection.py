@@ -104,9 +104,12 @@ def apply_selection(
         print(f"    Generation distribution: {dict(sorted(gen_counts.items()))}")
     elif method == "energy_based":
         # Show energy distribution of survivors
-        energies = [ind.energy for ind in new_population]
-        avg_energy = sum(energies) / len(energies) if energies else 0
-        print(f"    Survivor energy: min={min(energies):.1f}, max={max(energies):.1f}, avg={avg_energy:.1f}")
+        if new_population:
+            energies = [ind.energy for ind in new_population]
+            avg_energy = sum(energies) / len(energies)
+            print(f"    Survivor energy: min={min(energies):.1f}, max={max(energies):.1f}, avg={avg_energy:.1f}")
+        else:
+            print(f"    No survivors (population extinct)")
     
     return new_population, new_positions, new_size, new_orientations
 

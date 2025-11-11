@@ -89,6 +89,35 @@ class EvolutionDataCollector:
         self.population_size.append(population_size)
         self.events[generation] = []
     
+    def record_extinct_generation(self, generation: int) -> None:
+        """
+        Record a generation with 0 population (extinction).
+        Adds the generation with placeholder values for all stats.
+        
+        Args:
+            generation: Generation number
+        """
+        self.generations.append(generation)
+        self.population_size.append(0)
+        self.events[generation] = []
+        
+        # Add placeholder values for fitness stats (use 0.0)
+        self.fitness_best.append(0.0)
+        self.fitness_avg.append(0.0)
+        self.fitness_worst.append(0.0)
+        self.fitness_std.append(0.0)
+        
+        # Add placeholder values for age stats
+        self.age_min.append(0)
+        self.age_max.append(0)
+        self.age_avg.append(0.0)
+        self.age_std.append(0.0)
+        
+        # Add placeholder for genotype diversity
+        self.genotype_diversity.append(0.0)
+        
+        # Don't add to births/deaths/mating as those are offset by 1 generation
+    
     def record_fitness_stats(
         self, 
         population: list[SpatialIndividual],

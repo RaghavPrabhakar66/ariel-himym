@@ -43,6 +43,7 @@ class SpatialIndividual:
         self.generation = generation
         self.genotype: list[float] = []
         self.fitness: float = 0.0
+        self.evaluated: bool = False  # Track whether fitness has been evaluated
         self.start_position: np.ndarray | None = None
         self.end_position: np.ndarray | None = None
         self.spawn_position: np.ndarray | None = None
@@ -52,8 +53,9 @@ class SpatialIndividual:
     
     def __repr__(self) -> str:
         """String representation of the individual."""
+        eval_status = "true" if self.evaluated else "false"
         return (f"SpatialIndividual(id={self.unique_id}, gen={self.generation}, "
-                f"fitness={self.fitness:.4f}, energy={self.energy:.1f})")
+                f"fitness={self.fitness:.4f}, energy={self.energy:.1f}, eval={eval_status})")
     
     def copy(self) -> 'SpatialIndividual':
         """
@@ -67,6 +69,7 @@ class SpatialIndividual:
         new_individual = SpatialIndividual(generation=self.generation, initial_energy=self.energy)
         new_individual.genotype = self.genotype.copy()
         new_individual.fitness = self.fitness
+        new_individual.evaluated = False  # New individual needs evaluation if genotype changes
         new_individual.parent_ids = [self.unique_id]
         
         if self.start_position is not None:

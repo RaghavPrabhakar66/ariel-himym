@@ -62,8 +62,8 @@ class EAConfig:
         return self._config['selection'].get('offspring_radius', 0.3)
     
     @property
-    def max_population_size(self) -> int:
-        return self._config['selection'].get('max_population_size', 20)
+    def target_population_size(self) -> int:
+        return self._config['selection'].get('target_population_size', 20)
     
     @property
     def selection_method(self) -> str:
