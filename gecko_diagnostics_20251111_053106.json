@@ -1,0 +1,8 @@
+{
+  "displacement_m": 0.2574821041770513,
+  "velocity_variance": 0.06917672055701009,
+  "energy_delta": 0.05902662526490121,
+  "avg_contacts": 21.066666666666666,
+  "n_actuators": 8,
+  "timestep": 0.002
+}

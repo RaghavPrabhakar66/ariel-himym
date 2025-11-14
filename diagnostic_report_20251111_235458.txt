@@ -1,0 +1,2 @@
+CoM displacement: 10.0000 m
+Steps: 6666
