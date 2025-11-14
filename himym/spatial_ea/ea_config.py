@@ -28,6 +28,103 @@ class EAConfig:
         with open(config_path, 'r') as f:
             self._config = yaml.safe_load(f)
     
+    # Incubation Parameters
+    @property
+    def incubation_enabled(self) -> bool:
+        """Enable incubation phase before spatial evolution."""
+        return self._config.get('incubation', {}).get('enabled', False)
+    
+    @property
+    def incubation_population_size(self) -> int:
+        """Population size during incubation."""
+        return self._config.get('incubation', {}).get('population_size', 20)
+    
+    @property
+    def incubation_num_generations(self) -> int:
+        """Number of generations in incubation phase."""
+        return self._config.get('incubation', {}).get('num_generations', 50)
+    
+    @property
+    def incubation_mutation_rate(self) -> float:
+        """Weight mutation probability during incubation."""
+        return self._config.get('incubation', {}).get('mutation_rate', 0.8)
+    
+    @property
+    def incubation_mutation_power(self) -> float:
+        """Weight mutation strength during incubation."""
+        return self._config.get('incubation', {}).get('mutation_power', 0.5)
+    
+    @property
+    def incubation_add_connection_rate(self) -> float:
+        """Probability of adding new connection during incubation."""
+        return self._config.get('incubation', {}).get('add_connection_rate', 0.05)
+    
+    @property
+    def incubation_add_node_rate(self) -> float:
+        """Probability of adding new node during incubation."""
+        return self._config.get('incubation', {}).get('add_node_rate', 0.03)
+    
+    @property
+    def incubation_crossover_rate(self) -> float:
+        """Probability of crossover vs cloning during incubation."""
+        return self._config.get('incubation', {}).get('crossover_rate', 0.9)
+    
+    @property
+    def incubation_tournament_size(self) -> int:
+        """Number of individuals in tournament selection during incubation."""
+        return self._config.get('incubation', {}).get('tournament_size', 3)
+    
+    @property
+    def incubation_elitism_count(self) -> int:
+        """Number of best individuals to preserve unchanged during incubation."""
+        return self._config.get('incubation', {}).get('elitism_count', 2)
+    
+    @property
+    def incubation_use_directional_fitness(self) -> bool:
+        """Use directional fitness (movement toward target) instead of distance-only."""
+        return self._config.get('incubation', {}).get('use_directional_fitness', True)
+    
+    @property
+    def incubation_target_distance_min(self) -> float:
+        """Minimum distance to randomly placed target (meters)."""
+        return self._config.get('incubation', {}).get('target_distance_min', 5.0)
+    
+    @property
+    def incubation_target_distance_max(self) -> float:
+        """Maximum distance to randomly placed target (meters)."""
+        return self._config.get('incubation', {}).get('target_distance_max', 10.0)
+    
+    @property
+    def incubation_progress_weight(self) -> float:
+        """Weight for progress toward target component in directional fitness."""
+        return self._config.get('incubation', {}).get('progress_weight', 2.0)
+    
+    @property
+    def incubation_distance_weight(self) -> float:
+        """Weight for total distance traveled component in directional fitness."""
+        return self._config.get('incubation', {}).get('distance_weight', 0.2)
+    
+    # Spatial EA Directional Fitness Parameters
+    @property
+    def use_directional_fitness(self) -> bool:
+        """Use directional fitness for spatial EA (movement toward target) instead of distance-only."""
+        return self._config.get('incubation', {}).get('use_directional_fitness', True)
+    
+    @property
+    def target_distance_min(self) -> float:
+        """Minimum distance to randomly placed target for spatial EA (meters)."""
+        return self._config.get('incubation', {}).get('target_distance_min', 5.0)
+    
+    @property
+    def target_distance_max(self) -> float:
+        """Maximum distance to randomly placed target for spatial EA (meters)."""
+        return self._config.get('incubation', {}).get('target_distance_max', 10.0)
+    
+    @property
+    def progress_weight(self) -> float:
+        """Weight for progress toward target component for spatial EA."""
+        return self._config.get('incubation', {}).get('progress_weight', 0.5)
+    
     # Population Parameters
     @property
     def population_size(self) -> int:
@@ -152,6 +249,14 @@ class EAConfig:
     @property
     def mutation_strength(self) -> float:
         return self._config['mutation']['strength']
+
+    @property
+    def mutation_add_connection_rate(self) -> float:
+        return self._config['mutation']['add_connection_rate']
+    
+    @property
+    def mutation_add_node_rate(self) -> float:
+        return self._config['mutation']['add_node_rate']
     
     # Genotype Parameters - Amplitude
     @property

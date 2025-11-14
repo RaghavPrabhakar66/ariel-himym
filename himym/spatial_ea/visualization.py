@@ -13,37 +13,6 @@ from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 from spatial_individual import SpatialIndividual
 
-
-def plot_fitness_evolution(
-    fitness_history: list[float],
-    save_path: str
-) -> None:
-    """
-    Plot fitness over generations.
-    
-    Args:
-        fitness_history: List of best fitness values per generation
-        save_path: Path to save the plot
-    """
-    plt.figure(figsize=(10, 6))
-    plt.plot(
-        range(1, len(fitness_history) + 1), 
-        fitness_history, 
-        'b-o', 
-        linewidth=2, 
-        markersize=6
-    )
-    plt.xlabel("Generation")
-    plt.ylabel("Best Fitness (Distance Traveled)")
-    plt.title("Spatial EA: Evolution of Robot Movement")
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    
-    plt.savefig(save_path)
-    print(f"Fitness plot saved to {save_path}")
-    plt.close()
-
-
 def save_mating_trajectories(
     trajectories: list[list[np.ndarray]],
     population: list[SpatialIndividual],

@@ -7,26 +7,27 @@ from ea_config import config
 # Import local modules
 from spatial_individual import SpatialIndividual
 from genetic_operators import (
-    create_initial_genotype,
-    crossover_one_point,
-    mutate_gaussian,
+    create_initial_hyperneat_genome,
+    crossover_hyperneat,
+    mutate_hyperneat,
     clone_individual
 )
 from selection import apply_selection
 from evaluation import evaluate_population
-from visualization import plot_fitness_evolution, save_mating_trajectories
+from visualization import save_mating_trajectories
 from parent_selection import find_pairs, calculate_offspring_positions
 from evolution_data_collector import EvolutionDataCollector
 from simulation_utils import (
     generate_spawn_positions,
     spawn_population_in_world,
     get_tracked_geoms,
-    create_sinusoidal_controller,
     create_mating_controller,
     track_trajectories,
     update_trajectories
 )
 from visualize_experiment import ExperimentVisualizer
+from incubation import IncubationEvolution, seed_spatial_population_from_incubation
+from genetic_operators import create_initial_hyperneat_genome
 
 # Import robot and environment
 from ariel.body_phenotypes.robogen_lite.prebuilt_robots.gecko import gecko
@@ -88,6 +89,7 @@ class SpatialEA:
         
         # Mating zone management
         self.current_zone_centers: list[tuple[float, float]] = []
+        self.assigned_zones: dict[int, int] = {}  # Maps individual unique_id to zone index
         self._initialize_mating_zones()
     
     def _initialize_mating_zones(self) -> None:
@@ -118,12 +120,22 @@ class SpatialEA:
         if config.dynamic_mating_zones:
             print(f"  Zones will change every {config.zone_change_interval} generations")
     
+    def _assign_zones_to_population(self) -> None:
+        """Assign each individual to a random mating zone."""
+        if not self.current_zone_centers or len(self.current_zone_centers) == 0:
+            return
+        
+        # Assign each individual a random zone
+        for individual in self.population:
+            zone_idx = np.random.randint(0, len(self.current_zone_centers))
+            self.assigned_zones[individual.unique_id] = zone_idx
+    
     def _update_mating_zones(self) -> None:
         """Update mating zone positions if dynamic zones are enabled."""
         from parent_selection import generate_random_zone_centers
         
         # Only update zones if they're being used
-        if config.pairing_method != "mating_zone" and config.movement_bias != "nearest_zone":
+        if config.pairing_method != "mating_zone" and config.movement_bias not in ["nearest_zone", "assigned_zone"]:
             return
         
         if not config.dynamic_mating_zones:
@@ -140,6 +152,11 @@ class SpatialEA:
             )
             
             print(f"  New zone centers: {self.current_zone_centers}")
+            
+            # Reassign zones when they change (for assigned_zone movement bias)
+            if config.movement_bias == "assigned_zone":
+                self._assign_zones_to_population()
+                print(f"  Reassigned zones to all {len(self.population)} individuals")
     
     def create_individual(self) -> SpatialIndividual:
         """Create a new individual with random genotype."""
@@ -150,19 +167,89 @@ class SpatialEA:
         )
         self.next_unique_id += 1
         
-        individual.genotype = create_initial_genotype(
-            num_joints=self.num_joints,
-            amplitude_range=(config.amplitude_init_min, config.amplitude_init_max),
-            frequency_range=(config.frequency_init_min, config.frequency_init_max),
-            phase_range=(config.phase_min, config.phase_max)
+        # Create HyperNEAT genome instead of sinusoidal
+        individual.genotype = create_initial_hyperneat_genome(
+            num_inputs=4,  # CPPN inputs: x1, y1, x2, y2 (source and target coordinates)
+            num_outputs=1,  # CPPN output: connection weight
+            activation='sine'  # Use sine as default output activation
         )
         
         return individual
     
     def initialize_population(self) -> None:
-        """Initialize population with random individuals."""
-        print(f"Initializing population of {self.population_size} individuals")
-        self.population = [self.create_individual() for _ in range(self.population_size)]
+        """Initialize population with random individuals or from incubation."""
+        if config.incubation_enabled:
+            # Run incubation phase
+            print("\n" + "="*60)
+            print("STARTING INCUBATION PHASE")
+            print("="*60)
+            
+            incubator = IncubationEvolution(
+                population_size=config.incubation_population_size,
+                num_generations=config.incubation_num_generations,
+                num_joints=self.num_joints,
+                world_size=config.world_size,
+                simulation_time=config.simulation_time,
+                control_clip_min=config.control_clip_min,
+                control_clip_max=config.control_clip_max,
+                mutation_rate=config.incubation_mutation_rate,
+                mutation_power=config.incubation_mutation_power,
+                add_connection_rate=config.incubation_add_connection_rate,
+                add_node_rate=config.incubation_add_node_rate,
+                crossover_rate=config.incubation_crossover_rate,
+                tournament_size=config.incubation_tournament_size,
+                elitism_count=config.incubation_elitism_count,
+                use_directional_fitness=config.incubation_use_directional_fitness,
+                target_distance_min=config.incubation_target_distance_min,
+                target_distance_max=config.incubation_target_distance_max,
+                progress_weight=config.incubation_progress_weight,
+                distance_weight=config.incubation_distance_weight
+            )
+            
+            # Run incubation evolution
+            incubation_population = incubator.run()
+            
+            # Demonstrate best incubation individual
+            incubator.demonstrate_best(duration=15.0)
+            
+            # Update next_unique_id to continue from incubation
+            self.next_unique_id = incubator.next_unique_id
+            
+            # Seed spatial population from incubation results
+            self.population, self.next_unique_id = seed_spatial_population_from_incubation(
+                incubation_population=incubation_population,
+                target_population_size=self.population_size,
+                starting_generation=0,
+                next_unique_id=self.next_unique_id,
+                world_size=config.world_size,
+                spawn_x_range=(config.spawn_x_min, config.spawn_x_max),
+                spawn_y_range=(config.spawn_y_min, config.spawn_y_max),
+                min_spawn_distance=config.min_spawn_distance,
+                initial_energy=config.initial_energy
+            )
+            
+            # Store initial positions from seeding
+            self.current_positions = [np.array([ind.x, ind.y, config.spawn_z]) for ind in self.population]
+            
+            # Initialize orientations as empty (will be generated randomly at first spawn)
+            self.current_orientations = []
+            
+            # Assign zones if using assigned_zone movement bias
+            if config.movement_bias == "assigned_zone":
+                self._assign_zones_to_population()
+                print(f"  Assigned zones to {len(self.population)} individuals from incubation")
+            
+            print("\nTransition to spatial evolution complete")
+            print("="*60)
+        else:
+            # Standard random initialization
+            print(f"Initializing population of {self.population_size} individuals")
+            self.population = [self.create_individual() for _ in range(self.population_size)]
+            
+            # Assign zones if using assigned_zone movement bias
+            if config.movement_bias == "assigned_zone":
+                self._assign_zones_to_population()
+                print(f"  Assigned zones to {len(self.population)} individuals")
     
     def spawn_population(self) -> None:
         """Spawn population in simulation world."""
@@ -206,6 +293,9 @@ class SpatialEA:
             orientations=orientations
         )
         
+        # Store the orientations that were used for spawning
+        self.current_orientations = orientations
+        
         # Track robot geoms
         self.tracked_geoms = get_tracked_geoms(
             world=self.world,
@@ -236,12 +326,17 @@ class SpatialEA:
             print(f"  Evaluating {len(unevaluated)} new individuals (gen {self.generation + 1})")
             print(f"  Skipping {len(self.population) - len(unevaluated)} already-evaluated individuals")
             
+            # Use HyperNEAT controller for evaluation
             fitness_values = evaluate_population(
                 population=unevaluated,
                 world_size=config.world_size,
                 simulation_time=config.simulation_time,
                 control_clip_min=config.control_clip_min,
-                control_clip_max=config.control_clip_max
+                control_clip_max=config.control_clip_max,
+                use_directional_fitness=config.use_directional_fitness,
+                target_distance_min=config.target_distance_min,
+                target_distance_max=config.target_distance_max,
+                progress_weight=config.progress_weight
             )
             
             # Mark as evaluated
@@ -287,7 +382,8 @@ class SpatialEA:
             world_size=config.world_size,
             use_periodic_boundaries=config.use_periodic_boundaries,
             mating_zone_centers=self.current_zone_centers if self.current_zone_centers else None,
-            mating_zone_radius=config.mating_zone_radius
+            mating_zone_radius=config.mating_zone_radius,
+            assigned_zones=self.assigned_zones if config.movement_bias == "assigned_zone" else None
         )
         
         # Set up video recording if requested
@@ -356,9 +452,11 @@ class SpatialEA:
                 renderer.close()
         
         # Update positions for next generation
+        # Only update for robots that exist in current population
+        pop_size = len(self.population)
         self.current_positions = []
         self.current_orientations = []
-        for i in range(num_spawned):
+        for i in range(min(pop_size, num_spawned)):
             pos = self.tracked_geoms[i].xpos.copy()
             self.current_positions.append(pos)
             
@@ -382,18 +480,26 @@ class SpatialEA:
                 self.current_orientations.append(0.0)
         
         print(f"  Updated positions for next generation")
+        print(f"    Population size: {pop_size}")
         print(f"    Tracked {len(self.current_positions)} positions")
         print(f"    Tracked {len(self.current_orientations)} orientations")
         
         # Save trajectory visualization
-        if save_trajectories:
+        if save_trajectories and pop_size > 0:
             save_path = f"{config.figures_folder}/mating_trajectories_gen_{self.generation + 1:03d}.png"
+            # Handle case where tracked_geoms may be larger than current population
+            # (e.g., after selection reduced population but geoms already spawned)
+            pop_size = len(self.population)
+            vis_population = self.population[:pop_size]
+            vis_fitness = fitness_values[:pop_size]
+            vis_trajectories = trajectories[:pop_size]
+            
             save_mating_trajectories(
-                trajectories=trajectories,
-                population=self.population,
-                fitness_values=fitness_values,
+                trajectories=vis_trajectories,
+                population=vis_population,
+                fitness_values=vis_fitness,
                 generation=self.generation + 1,
-                population_size=self.population_size,
+                population_size=pop_size,
                 simulation_time=config.simulation_time,
                 world_size=config.world_size,
                 robot_size=config.robot_size,
@@ -409,6 +515,15 @@ class SpatialEA:
         Create next generation through movement-based pairing and reproduction.
         """
         print(f"  Creating next generation with movement-based selection...")
+        
+        # Check if population is already extinct
+        if len(self.population) == 0:
+            print(f"  ⚠️  WARNING: Population is extinct! Cannot create next generation.")
+            print(f"  💡 TIP: If using energy_based selection, check your energy config:")
+            print(f"      - initial_energy: {config.initial_energy}")
+            print(f"      - energy_depletion_rate: {config.energy_depletion_rate}")
+            print(f"      - Generations until extinction: ~{int(config.initial_energy / config.energy_depletion_rate)}")
+            return
         
         # Deplete energy for all individuals (time-based passive depletion)
         if config.enable_energy:
@@ -483,7 +598,7 @@ class SpatialEA:
             
             # Crossover
             if np.random.random() < config.crossover_rate:
-                child1, child2, self.next_unique_id = crossover_one_point(
+                child1, child2, self.next_unique_id = crossover_hyperneat(
                     parent1, parent2, self.next_unique_id, self.generation + 1
                 )
             else:
@@ -496,24 +611,22 @@ class SpatialEA:
                 )
             
             # Mutation
-            child1, self.next_unique_id = mutate_gaussian(
+            child1, self.next_unique_id = mutate_hyperneat(
                 child1,
-                mutation_rate=config.mutation_rate,
-                mutation_strength=config.mutation_strength,
                 next_unique_id=self.next_unique_id,
-                amplitude_range=(config.amplitude_min, config.amplitude_max),
-                frequency_range=(config.frequency_min, config.frequency_max),
-                phase_max=config.phase_max
+                weight_mutation_rate=config.mutation_rate,
+                weight_mutation_power=config.mutation_strength,
+                add_connection_rate=config.mutation_add_connection_rate,
+                add_node_rate=config.mutation_add_node_rate
             )
             
-            child2, self.next_unique_id = mutate_gaussian(
+            child2, self.next_unique_id = mutate_hyperneat(
                 child2,
-                mutation_rate=config.mutation_rate,
-                mutation_strength=config.mutation_strength,
                 next_unique_id=self.next_unique_id,
-                amplitude_range=(config.amplitude_min, config.amplitude_max),
-                frequency_range=(config.frequency_min, config.frequency_max),
-                phase_max=config.phase_max
+                weight_mutation_rate=config.mutation_rate,
+                weight_mutation_power=config.mutation_strength,
+                add_connection_rate=config.mutation_add_connection_rate,
+                add_node_rate=config.mutation_add_node_rate
             )
             
             new_population.append(child1)
@@ -528,6 +641,13 @@ class SpatialEA:
         self.population.extend(new_population)
         self.current_positions.extend(new_positions)
         self.current_orientations.extend(new_orientations)
+        
+        # Assign zones to new offspring if using assigned_zone movement bias
+        if config.movement_bias == "assigned_zone" and len(new_population) > 0:
+            for individual in new_population:
+                zone_idx = np.random.randint(0, len(self.current_zone_centers))
+                self.assigned_zones[individual.unique_id] = zone_idx
+            print(f"  Assigned zones to {len(new_population)} new offspring")
         
         # Verify consistency
         if len(self.population) != len(self.current_positions):
@@ -568,34 +688,6 @@ class SpatialEA:
             # Record energy stats after mating
             self.data_collector.record_energy_stats(self.population, "after_mating")
         
-        # Show fitness statistics before selection
-        if self.population:
-            fitness_values = [ind.fitness for ind in self.population]
-            print(f"  Pre-selection fitness range: {min(fitness_values):.4f} to {max(fitness_values):.4f}")
-            print(f"  Pre-selection fitness variation: {max(fitness_values) - min(fitness_values):.4f}")
-        else:
-            print(f"  No population for fitness statistics")
-        
-        # Record population size before selection
-        population_before_selection = len(self.population)
-        
-        # Apply selection to manage population size
-        self.population, self.current_positions, self.population_size, self.current_orientations = apply_selection(
-            population=self.population,
-            current_positions=self.current_positions,
-            method=config.selection_method,
-            target_size=config.target_population_size,
-            current_generation=self.generation,
-            current_orientations=self.current_orientations,
-            paired_indices=paired_indices,
-            max_age=config.max_age
-        )
-        
-        # Record selection statistics
-        self.data_collector.record_selection(
-            population_before=population_before_selection,
-            population_after=len(self.population)
-        )
     
     def run_evolution(self) -> SpatialIndividual | None:
         """
@@ -701,6 +793,40 @@ class SpatialEA:
                 print(f"  Average fitness: {avg_fitness:.4f}")
                 print(f"  Worst fitness: {min(fitness_values):.4f}")
             
+            # Apply selection AFTER fitness evaluation (not before!)
+            # This ensures offspring from previous generation are evaluated before being selected
+            if gen > 0:  # Skip selection in first generation (no offspring yet)
+                print(f"\n  Applying selection...")
+                print(f"  Pre-selection population: {len(self.population)}")
+                
+                # Show fitness statistics before selection
+                if self.population:
+                    fitness_values_pre_selection = [ind.fitness for ind in self.population]
+                    print(f"  Pre-selection fitness range: {min(fitness_values_pre_selection):.4f} to {max(fitness_values_pre_selection):.4f}")
+                
+                # Record population size before selection
+                population_before_selection = len(self.population)
+                
+                # Apply selection to manage population size
+                self.population, self.current_positions, self.population_size, self.current_orientations = apply_selection(
+                    population=self.population,
+                    current_positions=self.current_positions,
+                    method=config.selection_method,
+                    target_size=config.target_population_size,
+                    current_generation=self.generation,
+                    current_orientations=self.current_orientations,
+                    paired_indices=set(),  # No paired indices at this point
+                    max_age=config.max_age
+                )
+                
+                print(f"  Post-selection population: {len(self.population)}")
+                
+                # Record selection statistics
+                self.data_collector.record_selection(
+                    population_before=population_before_selection,
+                    population_after=len(self.population)
+                )
+            
             # Create next generation (except for last generation)
             if gen < self.num_generations - 1:
                 self.create_next_generation()
@@ -712,9 +838,13 @@ class SpatialEA:
                         print(f"Population size ({self.population_size}) reached or exceeded maximum limit ({config.max_population_limit})")
                         print(f"Stopping evolution after generation {gen + 1}")
                         
-                        # Record the final generation so it appears in plots
-                        # Use regular recording since population still exists (just too big)
+                        # Record the final generation with stats
                         self.data_collector.record_generation_start(gen + 1, len(self.population))
+                        
+                        # Record fitness and age stats for the final generation
+                        self.data_collector.record_fitness_stats(self.population, gen + 1)
+                        self.data_collector.record_age_stats(self.population, gen + 1)
+                        self.data_collector.record_genotype_diversity(self.population)
                         
                         self.data_collector.record_early_stop(
                             gen + 1, 
@@ -729,12 +859,7 @@ class SpatialEA:
                         break
                     
                     if self.population_size < config.min_population_limit:
-                        print(f"\n{'!'*60}")
-                        print(f"POPULATION EXTINCTION AFTER SELECTION!")
-                        print(f"{'!'*60}")
                         print(f"Population size ({self.population_size}) dropped below minimum limit ({config.min_population_limit})")
-                        print(f"Stopping evolution after generation {gen + 1}")
-                        print(f"{'!'*60}")
                         
                         # Record the final generation with 0 population using special method
                         self.data_collector.record_extinct_generation(gen + 1)
@@ -770,14 +895,47 @@ class SpatialEA:
         self.data_collector.save_to_csv(config.results_folder)
         self.data_collector.save_to_npz(config.results_folder)
         self.data_collector.plot_evolution_statistics(config.figures_folder)
-        
-        # Save final population controllers (if any survived)
-        if self.population:
-            self.save_final_controllers()
-        else:
-            print("\n⚠ No surviving population to save")
-        
+
         return self.get_best_individual()
+    
+    def _genotype_to_dict(self, genotype: dict) -> dict:
+        """Convert HyperNEAT genotype to JSON-serializable dictionary."""
+        if not isinstance(genotype, dict):
+            return genotype  # Not a HyperNEAT genotype, return as-is
+        
+        serializable = {}
+        
+        # Convert nodes
+        if 'nodes' in genotype:
+            serializable['nodes'] = [
+                {
+                    'id': node.id,
+                    'type': node.type,
+                    'activation': node.activation,
+                    'layer': node.layer
+                }
+                for node in genotype['nodes']
+            ]
+        
+        # Convert connections
+        if 'connections' in genotype:
+            serializable['connections'] = [
+                {
+                    'in_node': conn.in_node,
+                    'out_node': conn.out_node,
+                    'weight': conn.weight,
+                    'enabled': conn.enabled,
+                    'innovation': conn.innovation
+                }
+                for conn in genotype['connections']
+            ]
+        
+        # Copy other fields
+        for key in ['input_size', 'output_size', 'next_node_id', 'next_innovation']:
+            if key in genotype:
+                serializable[key] = genotype[key]
+        
+        return serializable
     
     def save_final_controllers(self) -> None:
         """
@@ -785,7 +943,7 @@ class SpatialEA:
         
         Saves in multiple formats:
         - JSON: Human-readable with individual metadata
-        - NPZ: NumPy format for fast loading
+        - NPZ: NumPy format for fast loading (HyperNEAT genotypes saved as pickled objects)
         - TXT: Simple readable format for best individual
         """
         from datetime import datetime
@@ -818,7 +976,7 @@ class SpatialEA:
                 'age': self.generation - ind.generation,
                 'fitness': ind.fitness,
                 'energy': ind.energy if config.enable_energy else None,
-                'genotype': ind.genotype,
+                'genotype': self._genotype_to_dict(ind.genotype),
                 'parent_ids': ind.parent_ids,
                 'position': ind.spawn_position.tolist() if ind.spawn_position is not None else None,
             }
@@ -831,9 +989,11 @@ class SpatialEA:
             json.dump(controllers_data, f, indent=2)
         print(f"  Final controllers saved to JSON: {json_path}")
         
-        # 2. Save all genotypes as NPZ (fast loading for analysis)
+        # 2. Save all genotypes as NPZ (using pickle for complex HyperNEAT objects)
         npz_path = results_folder / f"final_genotypes_{timestamp}.npz"
-        genotype_array = np.array([ind.genotype for ind in self.population])
+        
+        # For HyperNEAT genotypes, we need to use object arrays with pickle
+        genotype_array = np.array([ind.genotype for ind in self.population], dtype=object)
         fitness_array = np.array([ind.fitness for ind in self.population])
         energy_array = np.array([ind.energy for ind in self.population]) if config.enable_energy else None
         age_array = np.array([self.generation - ind.generation for ind in self.population])
@@ -856,7 +1016,7 @@ class SpatialEA:
         # 3. Save best controller in human-readable format
         best = self.get_best_individual()
         if not best:
-            print(f"  ⚠ No best individual to save (population extinct)")
+            print(f"  No best individual to save (population extinct)")
             return
         
         txt_path = results_folder / f"best_controller_{timestamp}.txt"
@@ -872,19 +1032,29 @@ class SpatialEA:
             if config.enable_energy:
                 f.write(f"Energy: {best.energy:.2f}\n")
             f.write(f"Parent IDs: {best.parent_ids}\n")
-            f.write(f"\nGenotype ({len(best.genotype)} values for {self.num_joints} joints):\n")
-            f.write("-" * 60 + "\n")
             
-            # Format genotype as joint parameters
-            for j in range(self.num_joints):
-                if j * 3 + 2 < len(best.genotype):
-                    amp = best.genotype[j * 3]
-                    freq = best.genotype[j * 3 + 1]
-                    phase = best.genotype[j * 3 + 2]
-                    f.write(f"Joint {j}:\n")
-                    f.write(f"  Amplitude: {amp:.6f}\n")
-                    f.write(f"  Frequency: {freq:.6f}\n")
-                    f.write(f"  Phase:     {phase:.6f}\n")
+            # Write HyperNEAT network structure
+            if isinstance(best.genotype, dict):
+                f.write(f"\nHyperNEAT Network Structure:\n")
+                f.write("-" * 60 + "\n")
+                f.write(f"Nodes: {len(best.genotype.get('nodes', []))}\n")
+                f.write(f"Connections: {len(best.genotype.get('connections', []))}\n")
+                f.write(f"Input size: {best.genotype.get('input_size', 'N/A')}\n")
+                f.write(f"Output size: {best.genotype.get('output_size', 'N/A')}\n")
+                
+                f.write(f"\nNetwork Nodes:\n")
+                for node in best.genotype.get('nodes', []):
+                    f.write(f"  Node {node.id}: type={node.type}, activation={node.activation}, layer={node.layer}\n")
+                
+                f.write(f"\nNetwork Connections:\n")
+                for conn in best.genotype.get('connections', []):
+                    status = "enabled" if conn.enabled else "disabled"
+                    f.write(f"  {conn.in_node} → {conn.out_node}: weight={conn.weight:.6f} ({status})\n")
+            else:
+                # Fallback for other genotype formats
+                f.write(f"\nGenotype:\n")
+                f.write("-" * 60 + "\n")
+                f.write(f"{best.genotype}\n")
             
             f.write("\n" + "-" * 60 + "\n")
             f.write("Raw genotype array:\n")
@@ -938,110 +1108,6 @@ class SpatialEA:
         if not self.population:
             return None
         return max(self.population, key=lambda ind: ind.fitness)
-    
-    def demonstrate_best(self) -> None:
-        """Demonstrate the best individual in isolation."""
-        print(f"\n{'='*60}")
-        print("DEMONSTRATING BEST INDIVIDUAL")
-        print(f"{'='*60}")
-        
-        best = self.get_best_individual()
-        if not best:
-            print("⚠ No individuals in population to demonstrate")
-            return
-        
-        print(f"Best fitness: {best.fitness:.4f}")
-        
-        if config.print_final_genotype:
-            print("\nBest genotype (amplitude, frequency, phase per joint):")
-            genotype = best.genotype
-            for j in range(self.num_joints):
-                if j * 3 + 2 < len(genotype):
-                    amp, freq, phase = genotype[j*3], genotype[j*3+1], genotype[j*3+2]
-                    print(f"  Joint {j}: amp={amp:.3f}, freq={freq:.3f}, phase={phase:.3f}")
-        
-        # Create single robot demo
-        mujoco.set_mjcb_control(None)
-        demo_world = SimpleFlatWorld(config.world_size)
-        demo_robot = gecko()
-        demo_world.spawn(demo_robot.spec, spawn_position=[0, 0, 0])
-        demo_model = demo_world.spec.compile()
-        demo_data = mujoco.MjData(demo_model)
-        
-        # Diagnostic info
-        print(f"\nDiagnostics:")
-        print(f"  Evolution num_joints (self.num_joints): {self.num_joints}")
-        print(f"  Demo model actuators (demo_model.nu): {demo_model.nu}")
-        print(f"  Best genotype length: {len(best.genotype)}")
-        print(f"  Expected genotype length: {self.num_joints * 3}")
-        
-        # Controller for single robot
-        def demo_controller(model: mujoco.MjModel, data: mujoco.MjData) -> None:
-            genotype = best.genotype
-            for j in range(min(demo_model.nu, len(genotype) // 3)):
-                if j * 3 + 2 < len(genotype):
-                    amplitude = genotype[j * 3]
-                    frequency = genotype[j * 3 + 1]
-                    phase = genotype[j * 3 + 2]
-                    control_value = amplitude * np.sin(frequency * data.time + phase)
-                    data.ctrl[j] = np.clip(
-                        control_value,
-                        config.control_clip_min,
-                        config.control_clip_max
-                    )
-        
-        mujoco.set_mjcb_control(demo_controller)
-        
-        # Record video
-        video_recorder = VideoRecorder(output_folder=config.video_folder)
-        print("Recording best individual demonstration...")
-        
-        video_renderer(
-            demo_model,
-            demo_data,
-            duration=config.final_demo_time,
-            video_recorder=video_recorder,
-        )
-        
-        print("Demonstration complete!")
-    
-    def demonstrate_final_population(self) -> None:
-        """Demonstrate the final evolved population."""
-        print(f"\n{'='*60}")
-        print("DEMONSTRATING FINAL POPULATION")
-        print(f"{'='*60}")
-        print(f"Recording {self.population_size} robots...")
-        
-        # Spawn final population
-        self.spawn_population()
-        
-        # Set controller
-        controller = create_sinusoidal_controller(
-            population=self.population,
-            num_joints=self.num_joints,
-            control_clip_min=config.control_clip_min,
-            control_clip_max=config.control_clip_max,
-            num_spawned_robots=len(self.tracked_geoms)
-        )
-        mujoco.set_mjcb_control(controller)
-        
-        # Record video
-        video_recorder = VideoRecorder(output_folder=config.video_folder)
-        
-        video_renderer(
-            self.model,
-            self.data,
-            duration=config.multi_robot_demo_time,
-            video_recorder=video_recorder,
-        )
-        
-        print("Final population demonstration complete!")
-    
-    def plot_fitness_evolution(self) -> None:
-        """Plot fitness over generations."""
-        save_path = f"{config.figures_folder}/spatial_ea_fitness_evolution.png"
-        plot_fitness_evolution(self.fitness_history, save_path)
-
 
 def main():
     """Main entry point for the spatial EA."""
@@ -1059,15 +1125,10 @@ def main():
         num_joints=num_joints
     )
     
-    # Run evolution - video recording controlled by ea_config.yaml
+    # Run evolution
     spatial_ea.run_evolution()
     
-    # Demonstrate results
-    #spatial_ea.demonstrate_best()
-    #spatial_ea.demonstrate_final_population()
-    
     # Plot results
-    spatial_ea.plot_fitness_evolution()
     viz = ExperimentVisualizer('path/to/results.csv')
     viz.generate_report()
     

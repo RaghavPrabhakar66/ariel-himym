@@ -169,81 +169,89 @@ def get_tracked_geoms(
     return tracked_geoms
 
 
-def apply_sinusoidal_control(
-    genotype: list[float],
-    joint_index: int,
-    ctrl_index: int,
-    model: mujoco.MjModel,
-    data: mujoco.MjData,
-    control_clip_min: float,
-    control_clip_max: float,
-    bias: float = 0.0
-) -> None:
-    """
-    Apply sinusoidal control to a single joint based on genotype.
-    
-    This is the core controller logic used by all controller variants.
-    
-    Args:
-        genotype: Individual's genotype containing [amp, freq, phase, ...] for each joint
-        joint_index: Which joint to control (0-indexed)
-        ctrl_index: Index in the control array (data.ctrl)
-        model: MuJoCo model
-        data: MuJoCo data
-        control_clip_min: Minimum control value
-        control_clip_max: Maximum control value
-        bias: Additional bias to add to control (default 0.0)
-    """
-    if ctrl_index < model.nu and joint_index * 3 + 2 < len(genotype):
-        amplitude = genotype[joint_index * 3]
-        frequency = genotype[joint_index * 3 + 1]
-        phase = genotype[joint_index * 3 + 2]
-        
-        control_value = amplitude * np.sin(frequency * data.time + phase)
-        control_value += bias
-        
-        data.ctrl[ctrl_index] = np.clip(
-            control_value,
-            control_clip_min,
-            control_clip_max
-        )
-
-
-def create_sinusoidal_controller(
+def create_hyperneat_controller(
     population: list[SpatialIndividual],
     num_joints: int,
     control_clip_min: float,
     control_clip_max: float,
-    num_spawned_robots: int
+    num_spawned_robots: int,
+    substrate_configs: list[tuple] | None = None
 ):
     """
-    Create a controller that applies sinusoidal joint controls.
+    Create a HyperNEAT controller that uses evolved CPPNs.
     
     Args:
-        population: List of individuals
+        population: List of individuals with CPPN genomes
         num_joints: Number of joints per robot
         control_clip_min: Minimum control value
         control_clip_max: Maximum control value
         num_spawned_robots: Number of actually spawned robots
+        substrate_configs: Pre-generated substrate configurations (optional)
         
     Returns:
         Controller function
     """
+    from hyperneat import CPPN, SubstrateNetwork, create_substrate_for_gecko
+    
+    # Generate substrate ANNs for each individual
+    substrate_networks = []
+    for individual in population[:num_spawned_robots]:
+        # Create CPPN from genome
+        cppn = CPPN(individual.genotype)
+        
+        # Create substrate configuration
+        input_coords, hidden_coords, output_coords = create_substrate_for_gecko(
+            num_joints=num_joints,
+            use_hidden_layer=True,
+            hidden_layer_size=num_joints
+        )
+        
+        # Generate substrate ANN
+        substrate = SubstrateNetwork(
+            input_coords=input_coords,
+            hidden_coords=hidden_coords,
+            output_coords=output_coords,
+            cppn=cppn,
+            weight_threshold=0.2
+        )
+        substrate_networks.append(substrate)
+    
     def controller(model: mujoco.MjModel, data: mujoco.MjData) -> None:
         for robot_idx in range(min(num_spawned_robots, len(population))):
-            individual = population[robot_idx]
+            substrate = substrate_networks[robot_idx]
             
+            # Get joint angles (skip free joint - 7 DOF per robot)
+            joint_start = robot_idx * (7 + num_joints)  # 7 for free joint + num_joints
+            joint_angles = data.qpos[joint_start + 7:joint_start + 7 + num_joints].copy()
+            
+            # Add CPG-style oscillator inputs (multiple frequencies for rich patterns)
+            osc1 = np.sin(data.time * 1.0)  # 1 Hz oscillator
+            osc2 = np.cos(data.time * 1.0)  # 1 Hz (90° phase shift)
+            osc3 = np.sin(data.time * 2.0)  # 2 Hz oscillator
+            osc4 = np.cos(data.time * 2.0)  # 2 Hz (90° phase shift)
+            
+            cpg_inputs = np.array([osc1, osc2, osc3, osc4])
+            bias_input = np.array([1.0])
+            
+            # No directional input for basic controller (no specific target)
+            directional_inputs = np.array([0.0, 0.0])
+            
+            # Combine inputs: joint angles + CPG oscillators + directional + bias
+            sensor_inputs = np.concatenate([joint_angles, cpg_inputs, directional_inputs, bias_input])
+            
+            # Activate substrate network
+            outputs = substrate.activate(sensor_inputs)
+            
+            # Apply outputs to joints
             for j in range(num_joints):
                 ctrl_idx = robot_idx * num_joints + j
-                apply_sinusoidal_control(
-                    genotype=individual.genotype,
-                    joint_index=j,
-                    ctrl_index=ctrl_idx,
-                    model=model,
-                    data=data,
-                    control_clip_min=control_clip_min,
-                    control_clip_max=control_clip_max
-                )
+                if ctrl_idx < model.nu and j < len(outputs):
+                    control_value = outputs[j]
+                    data.ctrl[ctrl_idx] = np.clip(
+                        control_value,
+                        control_clip_min,
+                        control_clip_max
+                    )
     
     return controller
 
@@ -258,10 +266,11 @@ def create_mating_controller(
     world_size: list[float] | None = None,
     use_periodic_boundaries: bool = False,
     mating_zone_centers: list[tuple[float, float]] | None = None,
-    mating_zone_radius: float = 3.0
+    mating_zone_radius: float = 3.0,
+    assigned_zones: dict[int, int] | None = None
 ):
     """
-    Create a controller that biases movement based on the specified strategy.
+    Create a HyperNEAT controller that biases movement based on the specified strategy.
     
     Args:
         population: List of individuals
@@ -269,11 +278,12 @@ def create_mating_controller(
         num_joints: Number of joints per robot
         control_clip_min: Minimum control value
         control_clip_max: Maximum control value
-        movement_bias: Movement bias strategy - "nearest_neighbor", "nearest_zone", or "none"
+        movement_bias: Movement bias strategy - "nearest_neighbor", "nearest_zone", "assigned_zone", or "none"
         world_size: World dimensions [width, height, z] for periodic boundaries
         use_periodic_boundaries: Whether to use periodic distance calculations
         mating_zone_centers: List of mating zone center coordinates for zone-biased movement
         mating_zone_radius: Radius of mating zones
+        assigned_zones: Dictionary mapping individual unique_id to zone index (for "assigned_zone" bias)
         
     Returns:
         Controller function
@@ -288,13 +298,33 @@ def create_mating_controller(
     
     num_spawned_robots = len(tracked_geoms)
     
+    # Create HyperNEAT substrates
+    from hyperneat import CPPN, SubstrateNetwork, create_substrate_for_gecko
+    
+    substrates = []
+    for individual in population:
+        cppn = CPPN(individual.genotype)
+        input_coords, hidden_coords, output_coords = create_substrate_for_gecko(
+            num_joints=num_joints,
+            use_hidden_layer=True,
+            hidden_layer_size=num_joints
+        )
+        substrate = SubstrateNetwork(
+            input_coords=input_coords,
+            hidden_coords=hidden_coords,
+            output_coords=output_coords,
+            cppn=cppn,
+            weight_threshold=0.2
+        )
+        substrates.append(substrate)
+    
     def controller(model: mujoco.MjModel, data: mujoco.MjData) -> None:
         for robot_idx in range(min(num_spawned_robots, len(population))):
             individual = population[robot_idx]
             current_pos = tracked_geoms[robot_idx].xpos.copy()
             
-            # Calculate directional bias based on movement_bias strategy
-            bias_direction = None
+            # Calculate directional input based on movement_bias strategy
+            directional_inputs = np.array([0.0, 0.0])  # Default: no directional info
             
             if movement_bias == "nearest_neighbor":
                 # Find nearest neighbor (distance only, no fitness)
@@ -326,12 +356,16 @@ def create_mating_controller(
                     
                     if use_periodic_boundaries and world_size is not None:
                         from periodic_boundary_utils import periodic_displacement
-                        bias_direction = periodic_displacement(
+                        target_vector = periodic_displacement(
                             current_pos, neighbor_pos, (world_size[0], world_size[1])
                         )
                     else:
-                        direction = neighbor_pos - current_pos
-                        bias_direction = np.array([direction[0], direction[1]])
+                        target_vector = neighbor_pos[:2] - current_pos[:2]
+                    
+                    # Normalize direction
+                    distance = np.linalg.norm(target_vector)
+                    if distance > 0.01:
+                        directional_inputs = target_vector / distance
             
             elif movement_bias == "nearest_zone":
                 # Find nearest mating zone center
@@ -355,41 +389,82 @@ def create_mating_controller(
                             min_dist_to_zone = distance
                             nearest_zone_center = zone_pos
                     
-                    # Calculate direction to nearest zone (only if outside zone radius)
-                    if nearest_zone_center is not None and min_dist_to_zone > mating_zone_radius:
+                    # Calculate direction to nearest zone
+                    if nearest_zone_center is not None:
                         if use_periodic_boundaries and world_size is not None:
                             from periodic_boundary_utils import periodic_displacement
-                            bias_direction = periodic_displacement(
+                            target_vector = periodic_displacement(
                                 current_pos, nearest_zone_center, (world_size[0], world_size[1])
                             )
                         else:
-                            direction = nearest_zone_center - current_pos
-                            bias_direction = np.array([direction[0], direction[1]])
+                            target_vector = nearest_zone_center[:2] - current_pos[:2]
+                        
+                        # Normalize direction
+                        distance = np.linalg.norm(target_vector)
+                        if distance > 0.01:
+                            directional_inputs = target_vector / distance
+            
+            elif movement_bias == "assigned_zone":
+                # Target assigned mating zone for this individual
+                if (assigned_zones is not None and 
+                    mating_zone_centers is not None and 
+                    len(mating_zone_centers) > 0):
+                    
+                    if individual.unique_id in assigned_zones:
+                        zone_idx = assigned_zones[individual.unique_id]
+                        
+                        # Ensure zone_idx is valid
+                        if 0 <= zone_idx < len(mating_zone_centers):
+                            zone_center = mating_zone_centers[zone_idx]
+                            target_zone_pos = np.array([zone_center[0], zone_center[1], current_pos[2]])
+                            
+                            # Calculate direction to assigned zone
+                            if use_periodic_boundaries and world_size is not None:
+                                from periodic_boundary_utils import periodic_displacement
+                                target_vector = periodic_displacement(
+                                    current_pos, target_zone_pos, (world_size[0], world_size[1])
+                                )
+                            else:
+                                target_vector = target_zone_pos[:2] - current_pos[:2]
+                            
+                            # Normalize direction
+                            distance = np.linalg.norm(target_vector)
+                            if distance > 0.01:
+                                directional_inputs = target_vector / distance
             
             elif movement_bias == "none":
-                # No bias - pure sinusoidal movement
-                bias_direction = None
+                # No directional info - pure HyperNEAT movement
+                directional_inputs = np.array([0.0, 0.0])
             
-            # Apply control with calculated bias
+            # HyperNEAT controller
+            # Get joint angles for this robot (7 DOF free joint + num_joints hinge joints per robot)
+            joint_offset = robot_idx * (7 + num_joints)  # Each robot: 7 (free) + num_joints (hinges)
+            joint_angles = data.qpos[joint_offset + 7:joint_offset + 7 + num_joints].copy()
+            
+            # Add CPG-style oscillator inputs
+            osc1 = np.sin(data.time * 1.0)  # 1 Hz oscillator
+            osc2 = np.cos(data.time * 1.0)  # 1 Hz (90 deg phase shift)
+            osc3 = np.sin(data.time * 2.0)  # 2 Hz oscillator
+            osc4 = np.cos(data.time * 2.0)  # 2 Hz (90 deg phase shift)
+            
+            cpg_inputs = np.array([osc1, osc2, osc3, osc4])
+            bias_input = np.array([1.0])
+            
+            # Combine inputs: joint angles + CPG oscillators + directional + bias
+            # 8 joints + 4 CPG + 2 directional + 1 bias = 15 inputs
+            sensor_inputs = np.concatenate([joint_angles, cpg_inputs, directional_inputs, bias_input])
+            
+            # Get motor outputs from substrate
+            substrate = substrates[robot_idx]
+            motor_outputs = substrate.activate(sensor_inputs)
+            
+            # Apply to actuators (no post-processing needed - direction is in the network)
             for j in range(num_joints):
                 ctrl_idx = robot_idx * num_joints + j
-                
-                # Calculate joint-specific bias
-                bias = 0.0
-                if bias_direction is not None:
-                    # Simple directional bias based on x/y component
-                    bias = 0.2 * np.sign(bias_direction[j % 2])
-                
-                # Apply sinusoidal control with bias
-                apply_sinusoidal_control(
-                    genotype=individual.genotype,
-                    joint_index=j,
-                    ctrl_index=ctrl_idx,
-                    model=model,
-                    data=data,
-                    control_clip_min=control_clip_min,
-                    control_clip_max=control_clip_max,
-                    bias=bias
+                data.ctrl[ctrl_idx] = np.clip(
+                    motor_outputs[j],
+                    control_clip_min,
+                    control_clip_max
                 )
     
     return controller

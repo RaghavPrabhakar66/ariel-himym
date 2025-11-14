@@ -6,6 +6,7 @@ population size and determining which individuals survive.
 """
 
 import numpy as np
+import random
 from spatial_individual import SpatialIndividual
 
 
@@ -244,8 +245,6 @@ def _selection_probabilistic_age(
     Returns:
         List of indices to keep (whoever survives the probabilistic culling)
     """
-    import random
-    
     survivors = []
     deaths = []
     

@@ -56,17 +56,22 @@ def _proximity_pairing(
 ) -> tuple[list[tuple[int, int]], set[int]]:
     pairs = []
     paired_indices = set()
+    pair_distances = []  # Track distances for debugging
     
     # Iterate through population in order 
     for idx in range(len(population)):
+        # Skip if already paired
+        if idx in paired_indices:
+            continue
+            
         current_pos = tracked_geoms[idx].xpos.copy()
         
-        # Find nearest neighbor within pairing radius
+        # Find nearest unpaired neighbor within pairing radius
         nearest_partner_idx = None
         nearest_distance = float('inf')
         
         for other_idx in range(len(population)):
-            if other_idx == idx:
+            if other_idx == idx or other_idx in paired_indices:
                 continue
             
             other_pos = tracked_geoms[other_idx].xpos.copy()
@@ -87,6 +92,12 @@ def _proximity_pairing(
             pairs.append((idx, nearest_partner_idx))
             paired_indices.add(idx)
             paired_indices.add(nearest_partner_idx)
+            pair_distances.append(nearest_distance)
+    
+    # Print pairing distance statistics
+    if pair_distances:
+        print(f"    Proximity pairing distances: min={min(pair_distances):.2f}m, "
+              f"max={max(pair_distances):.2f}m, avg={np.mean(pair_distances):.2f}m")
     
     return pairs, paired_indices
 

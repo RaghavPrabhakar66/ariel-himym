@@ -230,12 +230,19 @@ class EvolutionDataCollector:
             self.genotype_diversity.append(0.0)
             return
         
-        # Flatten all genotypes and compute standard deviation
-        all_genes = []
-        for ind in population:
-            all_genes.extend(ind.genotype)
+        # HyperNEAT genome - measure diversity of connection weights
+        sample_genotype = population[0].genotype
         
-        diversity = np.std(all_genes) if all_genes else 0.0
+        if isinstance(sample_genotype, dict):
+            all_weights = []
+            for ind in population:
+                if 'connections' in ind.genotype:
+                    all_weights.extend([c.weight for c in ind.genotype['connections'] if c.enabled])
+            diversity = np.std(all_weights) if all_weights else 0.0
+        else:
+            # Fallback for unexpected genotype format
+            diversity = 0.0
+        
         self.genotype_diversity.append(diversity)
     
     def add_event(self, generation: int, event_description: str) -> None:
