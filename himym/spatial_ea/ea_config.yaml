@@ -3,7 +3,7 @@
 
 # Incubation Phase Parameters
 incubation:
-  enabled: true              # Enable incubation phase before spatial evolution
+  enabled: false              # Enable incubation phase before spatial evolution
   population_size: 30         # Population size during incubation
   num_generations: 20         # Number of generations in incubation phase (increased for gentler mutation)
   mutation_rate: 0.8          # Weight mutation probability
@@ -31,12 +31,12 @@ population:
 
 # Selection Parameters
 selection:
-  pairing_radius: 100.0      # Maximum distance for pairing robots (meters)
+  pairing_radius: 100      # Maximum distance for pairing robots (meters)
   offspring_radius: 2.0      # Radius around parents where offspring spawn (meters)
   target_population_size: 30     # Target population size used for certain selection methods. (Doesn't stop the simulation)
   selection_method: "fitness_based"  # Selection method: "parents_die", "fitness_based", "age_based", "probabilistic_age", "energy_based"
-  pairing_method: "mating_zone"  # Pairing method: "proximity_pairing", "random", "mating_zone"
-  movement_bias: "assigned_zone"  # Directional input source: "nearest_neighbor", "nearest_zone", "assigned_zone", "none"
+  pairing_method: "random"  # Pairing method: "proximity_pairing", "random", "mating_zone"
+  movement_bias: "nearest_neighbor"  # Directional input source: "nearest_neighbor", "nearest_zone", "assigned_zone", "none"
                                   # Controllers receive normalized (x,y) direction to target as neural inputs (no post-processing modulation)
                                   # "none" provides zero directional info, forcing pure locomotion gaits
   max_age: 10                 # Maximum age for probabilistic_age selection (death probability = age/max_age)
@@ -102,3 +102,4 @@ logging:
 # Video Recording
 video:
   record_generation_videos: false   # Whether to record videos of mating movement for each generation
+  save_generation_snapshots: true   # Whether to save a single image frame from each generation

@@ -389,6 +389,24 @@ class SpatialEA:
         # Set up video recording if requested
         video_recorder = None
         renderer = None
+        snapshot_saved = False
+        
+        if config.record_generation_videos or config.save_generation_snapshots:
+            scene_option = mujoco.MjvOption()
+            scene_option.flags[mujoco.mjtVisFlag.mjVIS_JOINT] = True
+            
+            # Create renderer for video and/or snapshots
+            # Note: Resolution limited by model's offwidth/offheight (1280x960 in SimpleFlatWorld)
+            # Snapshots use max resolution, video uses smaller for file size
+            render_width = 1280 if config.save_generation_snapshots else 1280
+            render_height = 960 if config.save_generation_snapshots else 720
+            
+            renderer = mujoco.Renderer(
+                self.model,
+                width=render_width,
+                height=render_height
+            )
+            
         if config.record_generation_videos:
             video_name = f"generation_{self.generation + 1:03d}_mating_movement"
             video_recorder = VideoRecorder(
@@ -396,8 +414,7 @@ class SpatialEA:
                 output_folder=config.video_folder
             )
             
-            scene_option = mujoco.MjvOption()
-            scene_option.flags[mujoco.mjtVisFlag.mjVIS_JOINT] = True
+            # Override renderer size for video
             renderer = mujoco.Renderer(
                 self.model,
                 width=video_recorder.width,
@@ -414,6 +431,7 @@ class SpatialEA:
         # Run mating movement simulation
         mujoco.set_mjcb_control(controller)
         sim_steps = int(duration / self.model.opt.timestep)
+        snapshot_step = sim_steps // 2  # Capture snapshot at midpoint
         
         for step in range(sim_steps):
             mujoco.mj_step(self.model, self.data)
@@ -431,8 +449,25 @@ class SpatialEA:
             
             print(f"    Mating step {step + 1}/{sim_steps}", end='\r')
             
+            # Save snapshot at midpoint (if enabled and not already saved)
+            if (config.save_generation_snapshots and renderer is not None and 
+                not snapshot_saved and step == snapshot_step):
+                scene_option = mujoco.MjvOption()
+                scene_option.flags[mujoco.mjtVisFlag.mjVIS_JOINT] = True
+                renderer.update_scene(self.data, scene_option=scene_option)
+                snapshot_frame = renderer.render()
+                
+                # Save snapshot as PNG
+                import imageio
+                snapshot_path = f"{config.figures_folder}/generation_{self.generation + 1:03d}_snapshot.png"
+                imageio.imwrite(snapshot_path, snapshot_frame)
+                snapshot_saved = True
+                print(f"\n  Saved snapshot: generation_{self.generation + 1:03d}_snapshot.png")
+            
             # Record video frame if enabled
             if config.record_generation_videos and renderer is not None and video_recorder is not None:
+                scene_option = mujoco.MjvOption()
+                scene_option.flags[mujoco.mjtVisFlag.mjVIS_JOINT] = True
                 if step % steps_per_frame == 0:
                     renderer.update_scene(self.data, scene_option=scene_option)
                     video_recorder.write(frame=renderer.render())
@@ -450,6 +485,9 @@ class SpatialEA:
             print(f"  Video saved: {video_recorder.frame_count} frames")
             if renderer is not None:
                 renderer.close()
+        elif config.save_generation_snapshots and renderer is not None:
+            # Close renderer if it was only used for snapshots
+            renderer.close()
         
         # Update positions for next generation
         # Only update for robots that exist in current population

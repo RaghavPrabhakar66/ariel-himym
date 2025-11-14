@@ -387,6 +387,10 @@ class EAConfig:
     def record_generation_videos(self) -> bool:
         return self._config['video'].get('record_generation_videos', False)
     
+    @property
+    def save_generation_snapshots(self) -> bool:
+        return self._config['video'].get('save_generation_snapshots', True)
+    
     def get_raw_config(self) -> dict[str, Any]:
         """Return the raw configuration dictionary."""
         return self._config
