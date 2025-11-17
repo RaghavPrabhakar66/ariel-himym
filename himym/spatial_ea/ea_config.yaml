@@ -3,7 +3,7 @@
 
 # Incubation Phase Parameters
 incubation:
-  enabled: false              # Enable incubation phase before spatial evolution
+  enabled: true              # Enable incubation phase before spatial evolution
   population_size: 30         # Population size during incubation
   num_generations: 20         # Number of generations in incubation phase (increased for gentler mutation)
   mutation_rate: 0.8          # Weight mutation probability
@@ -23,7 +23,7 @@ incubation:
 
 # Population and Evolution Parameters
 population:
-  size: 10                    # Number of individuals in the population
+  size: 30                    # Number of individuals in the population
   num_generations: 50         # Total number of generations to evolve
   max_population_limit: 100   # Absolute maximum population of simulation (simulation stops if reached)
   min_population_limit: 1     # Minimum population (simulation stops if population drops below this)
@@ -31,22 +31,22 @@ population:
 
 # Selection Parameters
 selection:
-  pairing_radius: 100      # Maximum distance for pairing robots (meters)
+  pairing_radius: 1.5      # Maximum distance for pairing robots (meters)
   offspring_radius: 2.0      # Radius around parents where offspring spawn (meters)
   target_population_size: 30     # Target population size used for certain selection methods. (Doesn't stop the simulation)
   selection_method: "fitness_based"  # Selection method: "parents_die", "fitness_based", "age_based", "probabilistic_age", "energy_based"
-  pairing_method: "random"  # Pairing method: "proximity_pairing", "random", "mating_zone"
-  movement_bias: "nearest_neighbor"  # Directional input source: "nearest_neighbor", "nearest_zone", "assigned_zone", "none"
+  pairing_method: "mating_zone"  # Pairing method: "proximity_pairing", "random", "mating_zone"
+  movement_bias: "assigned_zone"  # Directional input source: "nearest_neighbor", "nearest_zone", "assigned_zone", "none"
                                   # Controllers receive normalized (x,y) direction to target as neural inputs (no post-processing modulation)
                                   # "none" provides zero directional info, forcing pure locomotion gaits
   max_age: 10                 # Maximum age for probabilistic_age selection (death probability = age/max_age)
   
   # Energy-Based Selection Parameters
-  enable_energy: false         # Enable energy-based survival mechanics
+  enable_energy: true         # Enable energy-based survival mechanics
   initial_energy: 100.0       # Starting energy for each individual
   energy_depletion_rate: 20.0  # Energy lost per generation (time-based passive depletion)
-  mating_energy_effect: "cost"  # Effect of mating on energy: "restore" (full reset), "cost" (energy penalty), "none" (no effect)
-  mating_energy_amount: 25.0  # Energy restored (if "restore") or cost deducted (if "cost") when mating occurs
+  mating_energy_effect: "restore"  # Effect of mating on energy: "restore" (full reset), "cost" (energy penalty), "none" (no effect)
+  mating_energy_amount: 30.0  # Energy restored (if "restore") or cost deducted (if "cost") when mating occurs
   
   # Mating Zone Configuration
   mating_zone_center: [12.5, 12.5]  # Center coordinates (x, y) of the primary mating zone (used if num_zones=1 and not dynamic)
@@ -69,9 +69,7 @@ mutation:
 
 # Simulation Parameters
 simulation:
-  time: 30.0                  # Duration of each fitness evaluation (seconds)
-  final_demo_time: 15.0       # Duration of final best individual demonstration
-  multi_robot_demo_time: 300.0  # Duration of multi-robot demonstration
+  time: 60.0                  # Duration of each fitness evaluation (seconds)
   control_clip_min: -1.5708   # Minimum control value (-pi/2 radians, -90 degrees)
   control_clip_max: 1.5708    # Maximum control value (pi/2 radians, 90 degrees)
   use_periodic_boundaries: true  # Enable periodic (toroidal) boundaries

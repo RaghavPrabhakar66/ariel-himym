@@ -351,6 +351,7 @@ def mutate_hyperneat(
                 # Skip this mutation - connection references missing nodes
                 # This can happen due to crossover or data corruption
                 print(f"Warning: Connection {conn_to_split.from_node}->{conn_to_split.to_node} references missing nodes, skipping add_node mutation")
+                pass  # Silently skip invalid mutation
             else:
                 # Disable old connection
                 conn_to_split.enabled = False

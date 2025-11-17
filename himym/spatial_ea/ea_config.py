@@ -307,14 +307,6 @@ class EAConfig:
         return self._config['simulation']['time']
     
     @property
-    def final_demo_time(self) -> float:
-        return self._config['simulation']['final_demo_time']
-    
-    @property
-    def multi_robot_demo_time(self) -> float:
-        return self._config['simulation']['multi_robot_demo_time']
-    
-    @property
     def control_clip_min(self) -> float:
         return self._config['simulation']['control_clip_min']
     

@@ -278,10 +278,8 @@ class SpatialEA:
         
         # Determine spawn orientations
         if len(self.current_orientations) == self.population_size:
-            print(f"  Using orientations from previous generation")
             orientations = self.current_orientations.copy()
         else:
-            print(f"  Generating new random spawn orientations")
             # Random yaw angles between 0 and 2*pi
             orientations = [np.random.uniform(0, 2 * np.pi) for _ in range(self.population_size)]
         
