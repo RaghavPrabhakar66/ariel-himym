@@ -15,7 +15,7 @@ from genetic_operators import (
 from selection import apply_selection
 from evaluation import evaluate_population
 from visualization import save_mating_trajectories
-from parent_selection import find_pairs, calculate_offspring_positions
+from parent_selection import find_pairs, calculate_offspring_positions, generate_random_zone_centers
 from evolution_data_collector import EvolutionDataCollector
 from simulation_utils import (
     generate_spawn_positions,
@@ -94,7 +94,6 @@ class SpatialEA:
     
     def _initialize_mating_zones(self) -> None:
         """Initialize mating zone positions."""
-        from parent_selection import generate_random_zone_centers
         
         # Initialize zones if needed for pairing or movement bias
         if config.pairing_method != "mating_zone" and config.movement_bias != "nearest_zone":
@@ -117,8 +116,17 @@ class SpatialEA:
             print(f"  Zones used for: pairing")
         if config.movement_bias == "nearest_zone":
             print(f"  Zones used for: movement bias")
-        if config.dynamic_mating_zones:
-            print(f"  Zones will change every {config.zone_change_interval} generations")
+        
+        # Print zone relocation strategy
+        strategy = config.zone_relocation_strategy
+        if strategy == "static":
+            print(f"  Zone relocation: static (zones never move)")
+        elif strategy == "generation_interval":
+            print(f"  Zone relocation: every {config.zone_change_interval} generations")
+        elif strategy == "event_driven":
+            print(f"  Zone relocation: event-driven (zones relocate after matings)")
+        else:
+            print(f"  Zone relocation: {strategy}")
     
     def _assign_zones_to_population(self) -> None:
         """Assign each individual to a random mating zone."""
@@ -132,31 +140,102 @@ class SpatialEA:
     
     def _update_mating_zones(self) -> None:
         """Update mating zone positions if dynamic zones are enabled."""
-        from parent_selection import generate_random_zone_centers
         
         # Only update zones if they're being used
         if config.pairing_method != "mating_zone" and config.movement_bias not in ["nearest_zone", "assigned_zone"]:
             return
         
-        if not config.dynamic_mating_zones:
+        strategy = config.zone_relocation_strategy
+        
+        if strategy == "static":
+            # Never move zones
             return
         
-        # Check if it's time to change zones
-        if self.generation > 0 and self.generation % config.zone_change_interval == 0:
-            print(f"\n  UPDATING MATING ZONES (Generation {self.generation})")
-            self.current_zone_centers = generate_random_zone_centers(
-                num_zones=config.num_mating_zones,
-                world_size=(config.world_size[0], config.world_size[1]),
-                zone_radius=config.mating_zone_radius,
-                min_zone_distance=config.min_zone_distance
-            )
+        if strategy == "generation_interval":
+            # Check if it's time to change zones
+            if self.generation > 0 and self.generation % config.zone_change_interval == 0:
+                print(f"\n  UPDATING MATING ZONES (Generation {self.generation})")
+                self.current_zone_centers = generate_random_zone_centers(
+                    num_zones=config.num_mating_zones,
+                    world_size=(config.world_size[0], config.world_size[1]),
+                    zone_radius=config.mating_zone_radius,
+                    min_zone_distance=config.min_zone_distance
+                )
+                
+                print(f"  New zone centers: {self.current_zone_centers}")
+                
+                # Reassign zones when they change (for assigned_zone movement bias)
+                if config.movement_bias == "assigned_zone":
+                    self._assign_zones_to_population()
+                    print(f"  Reassigned zones to all {len(self.population)} individuals")
+        
+        # Note: event_driven relocation is handled in create_next_generation after pairing
+    
+    def _relocate_zones(self, zone_indices: set[int]) -> None:
+        """
+        Relocate specific mating zones to new random positions.
+        
+        Args:
+            zone_indices: Set of zone indices to relocate
+        """
+        if not zone_indices or len(self.current_zone_centers) == 0:
+            return
+        
+        print(f"\n  EVENT-DRIVEN ZONE RELOCATION")
+        print(f"  Relocating {len(zone_indices)} zones that had matings: {sorted(zone_indices)}")
+        
+        # For each zone to relocate, generate a new position
+        for zone_idx in zone_indices:
+            if zone_idx < len(self.current_zone_centers):
+                # Generate new position that doesn't overlap with existing zones
+                max_attempts = 100
+                for attempt in range(max_attempts):
+                    # Generate random position
+                    margin = 1.0
+                    zone_radius = config.mating_zone_radius
+                    x_min = margin + zone_radius
+                    x_max = config.world_size[0] - margin - zone_radius
+                    y_min = margin + zone_radius
+                    y_max = config.world_size[1] - margin - zone_radius
+                    
+                    new_x = np.random.uniform(x_min, x_max)
+                    new_y = np.random.uniform(y_min, y_max)
+                    new_center = (new_x, new_y)
+                    
+                    # Check distance to other zones (excluding the one being relocated)
+                    min_distance = zone_radius * config.min_zone_distance
+                    too_close = False
+                    for other_idx, other_center in enumerate(self.current_zone_centers):
+                        if other_idx == zone_idx:
+                            continue  # Skip self
+                        distance = np.sqrt((new_x - other_center[0])**2 + (new_y - other_center[1])**2)
+                        if distance < min_distance:
+                            too_close = True
+                            break
+                    
+                    if not too_close:
+                        old_center = self.current_zone_centers[zone_idx]
+                        self.current_zone_centers[zone_idx] = new_center
+                        print(f"    Zone {zone_idx}: {old_center} -> {new_center}")
+                        break
+                else:
+                    print(f"    Warning: Could not find non-overlapping position for zone {zone_idx}")
+        
+        # Reassign ONLY individuals that were in the relocated zones
+        if config.movement_bias == "assigned_zone":
+            reassigned_count = 0
+            for individual in self.population:
+                # Only reassign if this individual was assigned to one of the relocated zones
+                if individual.unique_id in self.assigned_zones:
+                    old_zone = self.assigned_zones[individual.unique_id]
+                    if old_zone in zone_indices:
+                        # Reassign to a random zone (could be the same zone with new position)
+                        new_zone = np.random.randint(0, len(self.current_zone_centers))
+                        self.assigned_zones[individual.unique_id] = new_zone
+                        reassigned_count += 1
             
-            print(f"  New zone centers: {self.current_zone_centers}")
-            
-            # Reassign zones when they change (for assigned_zone movement bias)
-            if config.movement_bias == "assigned_zone":
-                self._assign_zones_to_population()
-                print(f"  Reassigned zones to all {len(self.population)} individuals")
+            print(f"  Reassigned {reassigned_count} individuals from relocated zones")
+    
     
     def create_individual(self) -> SpatialIndividual:
         """Create a new individual with random genotype."""
@@ -584,7 +663,7 @@ class SpatialEA:
         new_orientations: list[float] = []
         
         # Find pairs based on selected pairing method
-        pairs, paired_indices = find_pairs(
+        pairs, paired_indices, zones_with_matings = find_pairs(
             population=self.population,
             tracked_geoms=self.tracked_geoms,
             method=config.pairing_method,
@@ -598,6 +677,10 @@ class SpatialEA:
         print(f"  Created {len(pairs)} pairs from {self.population_size} robots")
         print(f"  Pairing method: {config.pairing_method}")
         print(f"  Unpaired robots: {self.population_size - len(paired_indices)}")
+        
+        # Event-driven zone relocation: relocate zones that had matings
+        if config.zone_relocation_strategy == "event_driven" and zones_with_matings:
+            self._relocate_zones(zones_with_matings)
         
         # Record mating statistics
         self.data_collector.record_mating_stats(

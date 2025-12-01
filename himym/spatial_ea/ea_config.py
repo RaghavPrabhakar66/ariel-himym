@@ -186,9 +186,43 @@ class EAConfig:
         return self._config['selection'].get('num_mating_zones', 1)
     
     @property
+    def zone_relocation_strategy(self) -> str:
+        """
+        Strategy for relocating mating zones.
+        
+        Returns:
+            One of: "static", "generation_interval", or "event_driven"
+            
+        Note: Provides backward compatibility with old boolean 'dynamic_mating_zones' config.
+        If dynamic_mating_zones is found, converts: True -> "generation_interval", False -> "static"
+        """
+        # Check for new string-based parameter first
+        strategy = self._config['selection'].get('zone_relocation_strategy', None)
+        if strategy is not None:
+            valid_strategies = ["static", "generation_interval", "event_driven"]
+            if strategy not in valid_strategies:
+                print(f"Warning: Invalid zone_relocation_strategy '{strategy}', defaulting to 'static'")
+                return "static"
+            return strategy
+        
+        # Backward compatibility: convert old boolean to string
+        old_dynamic = self._config['selection'].get('dynamic_mating_zones', None)
+        if old_dynamic is not None:
+            return "generation_interval" if old_dynamic else "static"
+        
+        # Default to static if neither parameter exists
+        return "static"
+    
+    @property
     def dynamic_mating_zones(self) -> bool:
-        """Whether mating zones change position over time."""
-        return self._config['selection'].get('dynamic_mating_zones', False)
+        """
+        DEPRECATED: Use zone_relocation_strategy instead.
+        
+        Maintained for backward compatibility only.
+        Returns True if zone_relocation_strategy is "generation_interval" or "event_driven".
+        """
+        strategy = self.zone_relocation_strategy
+        return strategy in ["generation_interval", "event_driven"]
     
     @property
     def zone_change_interval(self) -> int:

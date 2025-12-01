@@ -17,14 +17,25 @@ def find_pairs(
     world_size: tuple[float, float],
     use_periodic_boundaries: bool = False,
     **kwargs
-) -> tuple[list[tuple[int, int]], set[int]]:
+) -> tuple[list[tuple[int, int]], set[int], set[int]]:
+    """
+    Find mating pairs in the population.
+    
+    Returns:
+        Tuple of (pairs, paired_indices, zones_with_matings)
+        - pairs: List of (parent1_idx, parent2_idx) tuples
+        - paired_indices: Set of indices that were paired
+        - zones_with_matings: Set of zone indices that had successful matings (empty if not using mating zones)
+    """
     if method == "proximity_pairing":
-        return _proximity_pairing(
+        pairs, paired_indices = _proximity_pairing(
             population, tracked_geoms, pairing_radius, 
             world_size, use_periodic_boundaries
         )
+        return pairs, paired_indices, set()  # No zone tracking for proximity pairing
     elif method == "random":
-        return _random_pairing(population)
+        pairs, paired_indices = _random_pairing(population)
+        return pairs, paired_indices, set()  # No zone tracking for random pairing
     elif method == "mating_zone":
         # Support both single and multiple zones
         mating_zone_centers = kwargs.get('mating_zone_centers', None)
@@ -41,10 +52,11 @@ def find_pairs(
         )
     else:
         print(f"  Warning: Unknown pairing method '{method}', using proximity_pairing")
-        return _proximity_pairing(
+        pairs, paired_indices = _proximity_pairing(
             population, tracked_geoms, pairing_radius,
             world_size, use_periodic_boundaries
         )
+        return pairs, paired_indices, set()  # No zone tracking for fallback
 
 
 def _proximity_pairing(
@@ -142,7 +154,7 @@ def _mating_zone_pairing(
     use_periodic_boundaries: bool,
     mating_zone_centers: list[tuple[float, float]],
     mating_zone_radius: float
-) -> tuple[list[tuple[int, int]], set[int]]:
+) -> tuple[list[tuple[int, int]], set[int], set[int]]:
     """
     Pair individuals based on nearest neighbor, but only if they are within a mating zone.
     
@@ -158,19 +170,24 @@ def _mating_zone_pairing(
         mating_zone_radius: Radius of the mating zones (same for all zones)
         
     Returns:
-        Tuple of (pairs, paired_indices)
+        Tuple of (pairs, paired_indices, zones_with_matings)
+        - pairs: List of (parent1_idx, parent2_idx) tuples
+        - paired_indices: Set of indices that were paired
+        - zones_with_matings: Set of zone indices that had successful matings
     """
     pairs = []
     paired_indices = set()
+    zones_with_matings = set()  # Track which zones had matings
     
-    # First, identify which robots are in ANY mating zone
-    robots_in_zone = []
+    # First, identify which robots are in which mating zone
+    # Map: zone_index -> list of robot indices in that zone
+    robots_per_zone: dict[int, list[int]] = {i: [] for i in range(len(mating_zone_centers))}
+    
     for idx in range(len(population)):
         robot_pos = tracked_geoms[idx].xpos.copy()
         
-        # Check if robot is in any of the mating zones
-        in_any_zone = False
-        for zone_center in mating_zone_centers:
+        # Check which zone(s) this robot is in
+        for zone_idx, zone_center in enumerate(mating_zone_centers):
             zone_center_3d = np.array([zone_center[0], zone_center[1], 0.0])
             
             # Calculate distance to zone center
@@ -181,44 +198,52 @@ def _mating_zone_pairing(
             
             # Check if robot is within this mating zone
             if distance_to_center <= mating_zone_radius:
-                in_any_zone = True
-                break
-        
-        if in_any_zone:
-            robots_in_zone.append(idx)
+                robots_per_zone[zone_idx].append(idx)
     
-    # Now pair robots that are in the zone using nearest neighbor
-    for idx in robots_in_zone:
-        current_pos = tracked_geoms[idx].xpos.copy()
+    # Now pair robots within each zone using nearest neighbor
+    for zone_idx, robots_in_zone in robots_per_zone.items():
+        zone_paired_in_this_zone = False  # Track if any pairing happened in this zone
         
-        # Find nearest neighbor within pairing radius (among robots in zone)
-        nearest_partner_idx = None
-        nearest_distance = float('inf')
-        
-        for other_idx in robots_in_zone:
-            if other_idx == idx:
+        for idx in robots_in_zone:
+            # Skip if already paired
+            if idx in paired_indices:
                 continue
             
-            other_pos = tracked_geoms[other_idx].xpos.copy()
+            current_pos = tracked_geoms[idx].xpos.copy()
             
-            # Calculate distance using periodic boundaries if enabled
-            if use_periodic_boundaries:
-                distance = periodic_distance(current_pos, other_pos, world_size)
-            else:
-                distance = np.linalg.norm(current_pos - other_pos)
+            # Find nearest neighbor within pairing radius (among robots in same zone)
+            nearest_partner_idx = None
+            nearest_distance = float('inf')
             
-            # Check if within pairing radius and is closer than current nearest
-            if distance <= pairing_radius and distance < nearest_distance:
-                nearest_distance = distance
-                nearest_partner_idx = other_idx
+            for other_idx in robots_in_zone:
+                if other_idx == idx or other_idx in paired_indices:
+                    continue
+                
+                other_pos = tracked_geoms[other_idx].xpos.copy()
+                
+                # Calculate distance using periodic boundaries if enabled
+                if use_periodic_boundaries:
+                    distance = periodic_distance(current_pos, other_pos, world_size)
+                else:
+                    distance = np.linalg.norm(current_pos - other_pos)
+                
+                # Check if within pairing radius and is closer than current nearest
+                if distance <= pairing_radius and distance < nearest_distance:
+                    nearest_distance = distance
+                    nearest_partner_idx = other_idx
+            
+            # If found a partner within radius, create pair
+            if nearest_partner_idx is not None:
+                pairs.append((idx, nearest_partner_idx))
+                paired_indices.add(idx)
+                paired_indices.add(nearest_partner_idx)
+                zone_paired_in_this_zone = True
         
-        # If found a partner within radius, create pair
-        if nearest_partner_idx is not None:
-            pairs.append((idx, nearest_partner_idx))
-            paired_indices.add(idx)
-            paired_indices.add(nearest_partner_idx)
+        # Track this zone if any pairing occurred
+        if zone_paired_in_this_zone:
+            zones_with_matings.add(zone_idx)
     
-    return pairs, paired_indices
+    return pairs, paired_indices, zones_with_matings
 
 def generate_random_zone_centers(
     num_zones: int,

@@ -18,7 +18,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
     experiments = {}
     
     # ===== Baseline Experiments =====
-    
+    # DONE
     experiments['baseline_random_fitnessBased'] = ExperimentConfig(
         experiment_name="baseline_random_fitnessBased",
         num_runs=10,
@@ -137,7 +137,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         save_trajectories=False,
         save_individual_runs=False,
     )
-    
+    # DONE
     experiments['baseline_proximity_fitnessBased'] = ExperimentConfig(
         experiment_name="baseline_proximity_fitnessBased",
         num_runs=10,
@@ -183,7 +183,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
     # ===== Nearest Neighbor Movement Bias Experiments =====
     experiments['nearest_neighbor_fitBased'] = ExperimentConfig(
         experiment_name="nearest_neighbor_fitBased",
-        num_runs=5,
+        num_runs=10,
         
         # Incubation
         incubation_enabled=True,
@@ -212,25 +212,24 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         crossover_rate=0.9,
         
         # Simulation
-        simulation_time=60.0,
+        simulation_time=30.0,
         use_periodic_boundaries=True,
         
         # Output
-        save_snapshots=False,
-        save_trajectories=False,
-        save_individual_runs=False,
+        save_snapshots=True,
+        save_trajectories=True,
+        save_individual_runs=True,
     )
-
+    # DONE
     experiments['nearest_neighbor_energyCost'] = ExperimentConfig(
         experiment_name="nearest_neighbor_energyCost",
-        num_runs=5,
+        num_runs=30,
         
         # Incubation
-        incubation_enabled=True,
-        incubation_num_generations=20,
+        incubation_enabled=False,
         
         # Population parameters 
-        population_size=30,
+        population_size=10,
         num_generations=50,
         max_population_limit=100,
         min_population_limit=1,
@@ -240,15 +239,14 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         pairing_method="proximity_pairing",
         movement_bias="nearest_neighbor",
         selection_method="energy_based",
-        target_population_size=30,
         pairing_radius=1.5,
-        offspring_radius=2.0,
+        offspring_radius=3.0,
 
         enable_energy=True,
         initial_energy=100.0,
         energy_depletion_rate=10.0,
         mating_energy_effect="cost",
-        mating_energy_amount=20.0,
+        mating_energy_amount=35.0,
         
         # Mutation/Crossover (shared with incubation)
         mutation_rate=0.8,
@@ -258,25 +256,24 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         crossover_rate=0.9,
         
         # Simulation
-        simulation_time=60.0,
+        simulation_time=30.0,
         use_periodic_boundaries=True,
         
         # Output
-        save_snapshots=False,
-        save_trajectories=False,
-        save_individual_runs=False,
+        save_snapshots=True,
+        save_trajectories=True,
+        save_individual_runs=True,
     )
 
     experiments['nearest_neighbor_probAge'] = ExperimentConfig(
         experiment_name="nearest_neighbor_probAge",
-        num_runs=5,
+        num_runs=30,
         
         # Incubation
-        incubation_enabled=True,
-        incubation_num_generations=20,
+        incubation_enabled=False,
         
         # Population parameters 
-        population_size=30,
+        population_size=10,
         num_generations=50,
         max_population_limit=100,
         min_population_limit=1,
@@ -288,8 +285,8 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         selection_method="probabilistic_age",
         target_population_size=30,
         pairing_radius=1.5,
-        offspring_radius=2.0,
-        max_age=5,
+        offspring_radius=3.0,
+        max_age=10,
         
         # Mutation/Crossover (shared with incubation)
         mutation_rate=0.8,
@@ -299,75 +296,31 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         crossover_rate=0.9,
         
         # Simulation
-        simulation_time=60.0,
+        simulation_time=30.0,
         use_periodic_boundaries=True,
         
         # Output
-        save_snapshots=False,
-        save_trajectories=False,
-        save_individual_runs=False,
+        save_snapshots=True,
+        save_trajectories=True,
+        save_individual_runs=True,
     )
 
 
 
 
     # ===== Mating Zone Movement Bias Experiments =====
-    experiments['dynamic_matingZone_assignedMating_fitBased'] = ExperimentConfig(
-        experiment_name="dynamic_matingZone_assignedMating_fitBased",
-        num_runs=5,
-        
-        # Incubation
-        incubation_enabled=True,
-        incubation_num_generations=20,
-        
-        # Population parameters 
-        population_size=30,
-        num_generations=50,
-        max_population_limit=100,
-        min_population_limit=1,
-        stop_on_limits=True,
-        
-        # Selection parameters
-        pairing_method="mating_zone",
-        movement_bias="assigned_zone",
-        selection_method="fitness_based",
-        target_population_size=30,
-        pairing_radius=10.0,
-        offspring_radius=2.0,
-
-        mating_zone_radius=2.5,
-        num_mating_zones=4,
-        dynamic_mating_zones=True,
-        zone_change_interval=3,
-        min_zone_distance=2.0,
-        
-        # Mutation/Crossover (shared with incubation)
-        mutation_rate=0.8,
-        mutation_strength=0.5,
-        add_connection_rate=0.05,
-        add_node_rate=0.03,
-        crossover_rate=0.9,
-        
-        # Simulation
-        simulation_time=60.0,
-        use_periodic_boundaries=True,
-        
-        # Output
-        save_snapshots=False,
-        save_trajectories=False,
-        save_individual_runs=False,
-    )
-
+    
+    # Static zones - never move
     experiments['static_matingZone_assignedMating_fitBased'] = ExperimentConfig(
         experiment_name="static_matingZone_assignedMating_fitBased",
-        num_runs=5,
+        num_runs=10,
         
         # Incubation
-        incubation_enabled=True,
+        incubation_enabled=False,
         incubation_num_generations=20,
         
         # Population parameters 
-        population_size=30,
+        population_size=20,
         num_generations=50,
         max_population_limit=100,
         min_population_limit=1,
@@ -383,10 +336,10 @@ def define_experiments() -> dict[str, ExperimentConfig]:
 
         mating_zone_radius=2.5,
         num_mating_zones=4,
-        dynamic_mating_zones=False,
+        zone_relocation_strategy="static",  # Zones never move
         min_zone_distance=2.0,
         
-        # Mutation/Crossover (shared with incubation)
+        # Mutation/Crossover
         mutation_rate=0.8,
         mutation_strength=0.5,
         add_connection_rate=0.05,
@@ -398,9 +351,101 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         use_periodic_boundaries=True,
         
         # Output
-        save_snapshots=False,
-        save_trajectories=False,
-        save_individual_runs=False,
+        save_snapshots=True,
+        save_trajectories=True,
+        save_individual_runs=True,
+    )
+    
+    # Generation interval zones - move every N generations
+    # DONE
+    experiments['interval_matingZone_assignedMating_fitBased'] = ExperimentConfig(
+        experiment_name="interval_matingZone_assignedMating_fitBased",
+        num_runs=10,
+        
+        # Incubation
+        incubation_enabled=False,
+        incubation_num_generations=20,
+        
+        # Population parameters 
+        population_size=20,
+        num_generations=50,
+        max_population_limit=100,
+        min_population_limit=1,
+        stop_on_limits=True,
+        
+        # Selection parameters
+        pairing_method="mating_zone",
+        movement_bias="assigned_zone",
+        selection_method="fitness_based",
+        target_population_size=30,
+        pairing_radius=10.0,
+        offspring_radius=3.0,
+
+        mating_zone_radius=2.0,
+        num_mating_zones=6,
+        zone_relocation_strategy="generation_interval",  # Move every N generations
+        zone_change_interval=10,
+        min_zone_distance=2.0,
+        
+        # Mutation/Crossover
+        mutation_rate=0.8,
+        mutation_strength=0.5,
+        add_connection_rate=0.05,
+        add_node_rate=0.03,
+        crossover_rate=0.9,
+        
+        # Simulation
+        simulation_time=60.0,
+        use_periodic_boundaries=True,
+        
+        # Output
+        save_snapshots=True,
+        save_trajectories=True,
+        save_individual_runs=True,
+    )
+    
+    # Event-driven zones - move after matings occur (NEW!)
+    experiments['eventDriven_matingZone_assignedMating_fitBased'] = ExperimentConfig(
+        experiment_name="eventDriven_matingZone_assignedMating_fitBased",
+        num_runs=10,
+        
+        # Incubation
+        incubation_enabled=True,
+        incubation_num_generations=20,
+        
+        # Population parameters 
+        population_size=30,
+        num_generations=100,
+        stop_on_limits=True,
+        
+        # Selection parameters
+        pairing_method="mating_zone",
+        movement_bias="assigned_zone",
+        selection_method="fitness_based",
+        target_population_size=30,
+        pairing_radius=10.0,
+        offspring_radius=3.0,
+
+        mating_zone_radius=2.0,
+        num_mating_zones=15,
+        zone_relocation_strategy="event_driven",
+        min_zone_distance=2.0,
+        
+        # Mutation/Crossover
+        mutation_rate=0.8,
+        mutation_strength=0.5,
+        add_connection_rate=0.05,
+        add_node_rate=0.03,
+        crossover_rate=0.9,
+        
+        # Simulation
+        simulation_time=30.0,
+        use_periodic_boundaries=True,
+        
+        # Output
+        save_snapshots=True,
+        save_trajectories=True,
+        save_individual_runs=True,
     )
     
     # ===== Selection Method Experiments =====
@@ -542,6 +587,23 @@ def main():
         default=None,
         help='Number of parallel workers (default: CPU count - 1)'
     )
+    parser.add_argument(
+        '--grid-file',
+        type=str,
+        default=None,
+        help='YAML file specifying a parameter grid for grid search (keys are ExperimentConfig attrs)'
+    )
+    parser.add_argument(
+        '--grid-base-experiment',
+        type=str,
+        default=None,
+        help='Name of the experiment defined in this script to use as base for the grid search'
+    )
+    parser.add_argument(
+        '--grid-sequential',
+        action='store_true',
+        help='Run each grid point sequentially (still can run trials in parallel inside each experiment)'
+    )
     
     args = parser.parse_args()
     
@@ -566,6 +628,34 @@ def main():
     if args.experiment == 'all':
         experiments_to_run = list(experiments.values())
     else:
+        # If user requested a grid search, handle separately
+        if args.grid_file is not None:
+            # grid_base_experiment must be provided
+            if args.grid_base_experiment is None:
+                print("Error: --grid-base-experiment must be provided when using --grid-file")
+                return
+
+            if args.grid_base_experiment not in experiments:
+                print(f"Error: Unknown base experiment '{args.grid_base_experiment}'")
+                print(f"Available: {', '.join(experiments.keys())}")
+                return
+
+            # Load grid YAML
+            import yaml
+            with open(args.grid_file, 'r') as f:
+                grid = yaml.safe_load(f)
+
+            base_exp = experiments[args.grid_base_experiment]
+            df = runner.run_grid_search(
+                base_experiment=base_exp,
+                param_grid=grid,
+                num_workers=args.num_workers,
+                parallel_runs=not args.grid_sequential,
+                verbose=True
+            )
+
+            print(f"Grid search finished. Summary:\n{df}")
+            return
         if args.experiment not in experiments:
             print(f"Error: Unknown experiment '{args.experiment}'")
             print(f"Available: {', '.join(experiments.keys())}")

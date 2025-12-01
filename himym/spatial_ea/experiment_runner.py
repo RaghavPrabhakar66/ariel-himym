@@ -24,6 +24,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import yaml
+import itertools
+import copy
 
 from ea_config import EAConfig, config
 
@@ -59,7 +61,8 @@ class ExperimentConfig:
     # Mating zone parameters (excluding mating_zone_center)
     mating_zone_radius: float | None = None
     num_mating_zones: int | None = None
-    dynamic_mating_zones: bool | None = None
+    dynamic_mating_zones: bool | None = None  # DEPRECATED: use zone_relocation_strategy
+    zone_relocation_strategy: str | None = None  # "static", "generation_interval", or "event_driven"
     zone_change_interval: int | None = None
     min_zone_distance: float | None = None
     
@@ -155,8 +158,15 @@ class ExperimentConfig:
             overrides['selection.mating_zone_radius'] = self.mating_zone_radius
         if self.num_mating_zones is not None:
             overrides['selection.num_mating_zones'] = self.num_mating_zones
-        if self.dynamic_mating_zones is not None:
-            overrides['selection.dynamic_mating_zones'] = self.dynamic_mating_zones
+        
+        # Handle zone relocation strategy (new parameter takes precedence over old)
+        if self.zone_relocation_strategy is not None:
+            overrides['selection.zone_relocation_strategy'] = self.zone_relocation_strategy
+        elif self.dynamic_mating_zones is not None:
+            # Backward compatibility: convert old boolean to new string
+            strategy = "generation_interval" if self.dynamic_mating_zones else "static"
+            overrides['selection.zone_relocation_strategy'] = strategy
+        
         if self.zone_change_interval is not None:
             overrides['selection.zone_change_interval'] = self.zone_change_interval
         if self.min_zone_distance is not None:
@@ -855,8 +865,13 @@ class ExperimentRunner:
             # Filter out None results (failures)
             results = [r for r in results_with_none if r is not None]
             
+            # IMPORTANT: Close pool before join to prevent workers from hanging
             pool.close()
             pool.join()
+            
+            # Force cleanup of any lingering processes
+            if verbose:
+                print("\nAll workers completed. Cleaning up...")
                 
         except KeyboardInterrupt:
             print("\n\nParallel execution interrupted by user!")
@@ -871,6 +886,14 @@ class ExperimentRunner:
                 pool.join()
             import traceback
             traceback.print_exc()
+        finally:
+            # Ensure pool is cleaned up
+            if pool is not None:
+                try:
+                    pool.terminate()
+                    pool.join()
+                except:
+                    pass
         
         # Store results
         self.experiments[experiment_config.experiment_name] = results
@@ -891,6 +914,343 @@ class ExperimentRunner:
             print(f"{'#'*60}\n")
         
         return results
+
+    def run_grid_search(
+        self,
+        base_experiment: ExperimentConfig,
+        param_grid: dict[str, list],
+        num_workers: int | None = None,
+        parallel_runs: bool = True,
+        verbose: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Run a grid search over parameters by creating experiment variations
+        from a base ExperimentConfig. The keys in `param_grid` should match
+        attribute names on `ExperimentConfig` (for example: 'mutation_rate',
+        'population_size', 'selection_method'). Each value should be a list
+        of values to try.
+
+        Returns a pandas DataFrame summarizing each grid point and resulting
+        aggregated outcome metrics (num_completed, num_extinctions, num_explosions,
+        max_generations_reached).
+        """
+        # Validate grid
+        if not param_grid:
+            raise ValueError("param_grid must be a non-empty dict")
+
+        # Prepare output summary
+        summary_rows = []
+
+        # Build cartesian product of grid
+        keys = list(param_grid.keys())
+        value_lists = [param_grid[k] for k in keys]
+
+        combinations = list(itertools.product(*value_lists))
+
+        if verbose:
+            print(f"Running grid search with {len(combinations)} combinations...")
+
+        for comb in combinations:
+            # Create a copy of the base experiment config
+            cfg_dict = copy.deepcopy(base_experiment.to_dict())
+            # Apply combination values
+            suffix_parts = []
+            for k, v in zip(keys, comb):
+                # set attribute on cfg_dict if present
+                if k not in cfg_dict:
+                    # allow setting nested attributes using dot-notation
+                    if '.' in k:
+                        # leave processing to apply_to_config when running
+                        # instead we'll set via ExperimentConfig if possible
+                        pass
+                cfg_dict[k] = v
+                suffix_parts.append(f"{k}={str(v)}")
+
+            # Build experiment config object
+            new_name = f"{base_experiment.experiment_name}_grid_{'_'.join(suffix_parts)}"
+            cfg_dict['experiment_name'] = new_name
+
+            new_exp = ExperimentConfig(**cfg_dict)
+
+            if verbose:
+                print(f"\n=== Grid point: {new_exp.experiment_name} ===")
+                for k, v in zip(keys, comb):
+                    print(f"  {k}: {v}")
+
+            # Run experiment (parallel runs inside each experiment still honored)
+            try:
+                if parallel_runs:
+                    results = self.run_experiment_parallel(new_exp, num_workers=num_workers, verbose=verbose)
+                else:
+                    results = self.run_experiment(new_exp, verbose=verbose)
+
+                # Aggregate
+                if results:
+                    aggregated = self.aggregate_results(results)
+                    row = {
+                        **{k: v for k, v in zip(keys, comb)},
+                        'experiment_name': new_exp.experiment_name,
+                        'num_runs': aggregated.num_runs,
+                        'num_completed': int(aggregated.num_completed),
+                        'num_extinctions': int(aggregated.num_extinctions),
+                        'num_explosions': int(aggregated.num_explosions),
+                        'max_generations_reached': int(np.max(aggregated.generations[aggregated.runs_active > 0])) if np.any(aggregated.runs_active > 0) else 0,
+                    }
+                else:
+                    row = {
+                        **{k: v for k, v in zip(keys, comb)},
+                        'experiment_name': new_exp.experiment_name,
+                        'num_runs': new_exp.num_runs,
+                        'num_completed': 0,
+                        'num_extinctions': 0,
+                        'num_explosions': 0,
+                        'max_generations_reached': 0,
+                    }
+
+                summary_rows.append(row)
+
+            except Exception as e:
+                print(f"Error running grid point {new_exp.experiment_name}: {e}")
+                import traceback
+                traceback.print_exc()
+                # record failure
+                row = {
+                    **{k: v for k, v in zip(keys, comb)},
+                    'experiment_name': new_exp.experiment_name,
+                    'num_runs': new_exp.num_runs,
+                    'num_completed': 0,
+                    'num_extinctions': 0,
+                    'num_explosions': 0,
+                    'max_generations_reached': 0,
+                }
+                summary_rows.append(row)
+
+        # Save summary to CSV
+        df = pd.DataFrame(summary_rows)
+        summary_path = self.base_output_dir / f"grid_search_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        df.to_csv(summary_path, index=False)
+        if verbose:
+            print(f"\nGrid search complete. Summary saved to: {summary_path}")
+
+        # Visualize grid search results
+        try:
+            visuals_dir = self.base_output_dir / f"grid_visuals_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            visuals_dir.mkdir(parents=True, exist_ok=True)
+
+            # Choose primary metric for visualization
+            metric = 'num_completed'
+
+            # Simple visualizations depending on number of swept keys
+            if len(keys) == 1:
+                k = keys[0]
+                plt.figure(figsize=(6, 4))
+                if pd.api.types.is_numeric_dtype(df[k]):
+                    df_sorted = df.sort_values(k)
+                    plt.plot(df_sorted[k], df_sorted[metric], marker='o')
+                    plt.xlabel(k)
+                    plt.ylabel(metric)
+                    plt.title(f"Grid: {k} vs {metric}")
+                else:
+                    # categorical
+                    plt.bar(df[k].astype(str), df[metric])
+                    plt.xlabel(k)
+                    plt.ylabel(metric)
+                    plt.title(f"Grid: {k} vs {metric}")
+                    plt.xticks(rotation=45, ha='right')
+                plt.tight_layout()
+                plt.savefig(visuals_dir / f"grid_{k}_vs_{metric}.png", dpi=200)
+                plt.close()
+
+            elif len(keys) == 2:
+                kx, ky = keys[0], keys[1]
+                # create pivot table for heatmap
+                try:
+                    pivot = df.pivot_table(index=kx, columns=ky, values=metric, aggfunc='mean')
+                    # sort axes if numeric
+                    ix = pivot.index
+                    cx = pivot.columns
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    im = ax.imshow(pivot.values, aspect='auto', origin='lower', cmap='viridis')
+                    ax.set_xticks(range(len(cx)))
+                    ax.set_yticks(range(len(ix)))
+                    ax.set_xticklabels([str(c) for c in cx], rotation=45, ha='right')
+                    ax.set_yticklabels([str(i) for i in ix])
+                    ax.set_xlabel(ky)
+                    ax.set_ylabel(kx)
+                    fig.colorbar(im, ax=ax, label=metric)
+                    ax.set_title(f"Grid heatmap: {kx} x {ky} ({metric})")
+                    plt.tight_layout()
+                    plt.savefig(visuals_dir / f"grid_heatmap_{kx}_x_{ky}_{metric}.png", dpi=200)
+                    plt.close()
+                except Exception:
+                    # fallback scatter colored by metric
+                    plt.figure(figsize=(6, 5))
+                    plt.scatter(df[kx].astype(str), df[ky].astype(str), c=df[metric], cmap='viridis')
+                    plt.colorbar(label=metric)
+                    plt.xlabel(kx)
+                    plt.ylabel(ky)
+                    plt.title(f"Grid scatter: {kx} vs {ky} ({metric})")
+                    plt.xticks(rotation=45)
+                    plt.tight_layout()
+                    plt.savefig(visuals_dir / f"grid_scatter_{kx}_vs_{ky}_{metric}.png", dpi=200)
+                    plt.close()
+
+            else:
+                # For >2 keys produce pairwise scatter plots for numeric keys colored by metric
+                numeric_keys = [k for k in keys if pd.api.types.is_numeric_dtype(df[k])]
+                if len(numeric_keys) >= 2:
+                    # limit to first 4 numeric keys to avoid explosion
+                    sel = numeric_keys[:4]
+                    n = len(sel)
+                    fig, axes = plt.subplots(n, n, figsize=(3*n, 3*n))
+                    for i, xi in enumerate(sel):
+                        for j, yj in enumerate(sel):
+                            ax = axes[i, j]
+                            if i == j:
+                                ax.hist(df[xi].dropna(), bins=10, color='gray')
+                                ax.set_xlabel(xi)
+                            else:
+                                sc = ax.scatter(df[xi], df[yj], c=df[metric], cmap='viridis', s=40)
+                                if j == n-1:
+                                    fig.colorbar(sc, ax=ax)
+                            if i == n-1:
+                                ax.set_xlabel(xi)
+                            if j == 0:
+                                ax.set_ylabel(yj)
+                    plt.suptitle(f"Pairwise numeric grid scatter (colored by {metric})")
+                    plt.tight_layout(rect=[0, 0.03, 1, 0.97])
+                    plt.savefig(visuals_dir / f"grid_pairwise_numeric_{metric}.png", dpi=200)
+                    plt.close()
+
+            if verbose:
+                print(f"Grid visuals saved to: {visuals_dir}")
+            # --- Additional distribution plots per-parameter to identify phase transitions ---
+            try:
+                for k in keys:
+                    # Build groups of final populations per value for this parameter
+                    groups: dict[Any, list[float]] = {}
+                    for _, row in df.iterrows():
+                        exp_name = row.get('experiment_name')
+                        val = row.get(k)
+                        if exp_name is None:
+                            continue
+                        runs = self.experiments.get(exp_name, [])
+                        final_pops = [r.population_size[-1] if r.population_size else 0 for r in runs]
+                        groups.setdefault(val, []).extend(final_pops)
+
+                    # Skip if no data
+                    if not groups:
+                        continue
+
+                    # Prepare data for plotting (preserve sort order for numeric keys)
+                    try:
+                        sorted_items = sorted(groups.items(), key=lambda x: float(x[0]))
+                    except Exception:
+                        # fallback to original insertion order
+                        sorted_items = list(groups.items())
+
+                    labels = [str(item[0]) for item in sorted_items]
+                    data = [item[1] for item in sorted_items]
+
+                    # Skip empty groups
+                    if not any(len(d) for d in data):
+                        continue
+
+                    plt.figure(figsize=(8, 4))
+                    # Show boxplots with means to highlight distributions and phase changes
+                    plt.boxplot(data, showmeans=True, patch_artist=True,
+                                boxprops=dict(facecolor='lightblue', color='black'))
+                    plt.xlabel(k)
+                    plt.ylabel('Final population')
+                    plt.title(f'Final population distribution across values of {k}')
+                    # set x tick labels for boxplot (positions are 1..N)
+                    plt.xticks(range(1, len(labels) + 1), labels, rotation=45, ha='right')
+                    plt.tight_layout()
+                    safe_k = str(k).replace('/', '_').replace(' ', '_')
+                    plt.savefig(visuals_dir / f"grid_param_distribution_{safe_k}.png", dpi=200)
+                    plt.close()
+                # Also produce a stacked bar showing stop-reason fractions per parameter value
+                try:
+                    # For each swept key produce a stacked fraction bar of stop reasons
+                    for k in keys:
+                        # Get unique values from the dataframe for this key
+                        raw_vals = list(df[k].dropna().unique())
+                        # Try numeric sort, otherwise use string order
+                        try:
+                            raw_vals = sorted(raw_vals, key=lambda x: float(x))
+                        except Exception:
+                            raw_vals = [v for v in raw_vals]
+
+                        values = []
+                        completed_frac = []
+                        extinct_frac = []
+                        explode_frac = []
+                        other_frac = []
+
+                        for val in raw_vals:
+                            rows = df[df[k] == val]
+                            total = 0
+                            c_cnt = e_cnt = x_cnt = o_cnt = 0
+                            for _, row in rows.iterrows():
+                                exp_name = row.get('experiment_name')
+                                if exp_name is None:
+                                    continue
+                                runs = self.experiments.get(exp_name, [])
+                                if not runs:
+                                    continue
+                                for r in runs:
+                                    total += 1
+                                    if not r.stopped_early:
+                                        c_cnt += 1
+                                    else:
+                                        reason = (r.stop_reason or '').lower()
+                                        if 'extinct' in reason or 'extinction' in reason:
+                                            e_cnt += 1
+                                        elif 'explod' in reason or 'maximum' in reason:
+                                            x_cnt += 1
+                                        else:
+                                            o_cnt += 1
+
+                            if total == 0:
+                                continue
+
+                            values.append(str(val))
+                            completed_frac.append(c_cnt / total)
+                            extinct_frac.append(e_cnt / total)
+                            explode_frac.append(x_cnt / total)
+                            other_frac.append(o_cnt / total)
+
+                        if values:
+                            ind = np.arange(len(values))
+                            width = 0.6
+                            fig, ax = plt.subplots(figsize=(max(6, len(values) * 0.8), 4))
+                            ax.bar(ind, completed_frac, width, label='completed', color='C0')
+                            ax.bar(ind, extinct_frac, width, bottom=completed_frac, label='extinction', color='C1')
+                            bottom2 = np.array(completed_frac) + np.array(extinct_frac)
+                            ax.bar(ind, explode_frac, width, bottom=bottom2, label='explosion', color='C3')
+                            bottom3 = bottom2 + np.array(explode_frac)
+                            if any(other_frac):
+                                ax.bar(ind, other_frac, width, bottom=bottom3, label='other', color='C4')
+
+                            ax.set_ylabel('Fraction of runs')
+                            ax.set_xlabel(k)
+                            ax.set_title(f'Stop-reason fractions across values of {k}')
+                            ax.set_xticks(ind)
+                            ax.set_xticklabels(values, rotation=45, ha='right')
+                            ax.set_ylim([0, 1.05])
+                            ax.legend()
+                            safe_k = str(k).replace('/', '_').replace(' ', '_')
+                            plt.tight_layout()
+                            plt.savefig(visuals_dir / f"grid_param_stopfractions_{safe_k}.png", dpi=200)
+                            plt.close()
+                except Exception as e:
+                    print(f"Warning: failed to produce stop-fraction stacked bars: {e}")
+            except Exception as e:
+                print(f"Warning: failed to produce per-parameter distributions: {e}")
+        except Exception as e:
+            print(f"Warning: failed to produce grid visuals: {e}")
+
+        return df
     
     def aggregate_results(
         self,
@@ -1088,6 +1448,109 @@ class ExperimentRunner:
         plt.tight_layout()
         plt.savefig(output_dir / "aggregated_results.png", dpi=300, bbox_inches='tight')
         plt.close()
+        # ------------------------------------------------------------------
+        # Additional distributions across individual runs (final population
+        # and generations reached). These use the stored per-run results in
+        # self.experiments (if available) for the given experiment name.
+        # ------------------------------------------------------------------
+        try:
+            runs = self.experiments.get(aggregated.experiment_name, [])
+            if runs:
+                # Final population distribution
+                final_pops = [r.population_size[-1] if r.population_size else 0 for r in runs]
+                fig, ax = plt.subplots(figsize=(6, 4))
+                ax.hist(final_pops, bins=min(20, max(1, int(np.nanmax(final_pops) - np.nanmin(final_pops) + 1))),
+                        color='C2', alpha=0.85)
+                ax.axvline(np.mean(final_pops), color='k', linestyle='--', label=f"mean={np.mean(final_pops):.1f}")
+                ax.axvline(np.median(final_pops), color='r', linestyle=':', label=f"median={np.median(final_pops):.1f}")
+                ax.set_xlabel('Final population size')
+                ax.set_ylabel('Count')
+                ax.set_title('Distribution of final populations across runs')
+                ax.legend()
+                plt.tight_layout()
+                plt.savefig(output_dir / "final_population_distribution.png", dpi=200)
+                plt.close()
+
+                # Generations reached distribution
+                gens_completed = [r.completed_generations for r in runs]
+                # Use bins that reflect generation integers
+                max_gen = int(max(gens_completed)) if gens_completed else 0
+                bins = list(range(0, max_gen + 2)) if max_gen > 0 else 1
+                fig, ax = plt.subplots(figsize=(6, 4))
+                ax.hist(gens_completed, bins=bins, color='C3', alpha=0.85, align='left')
+                ax.set_xlabel('Generations reached')
+                ax.set_ylabel('Count')
+                ax.set_title('Distribution of generations reached across runs')
+                plt.tight_layout()
+                plt.savefig(output_dir / "generations_distribution.png", dpi=200)
+                plt.close()
+                # ------------------------------------------------------------------
+                # Additional recommended visuals
+                # 1) Stop-reason breakdown (pie chart)
+                # 2) Scatter: final population vs best fitness (per run)
+                # ------------------------------------------------------------------
+                try:
+                    # Stop reasons
+                    stop_counts = {'completed': 0, 'extinction': 0, 'explosion': 0, 'other': 0}
+                    for r in runs:
+                        if not r.stopped_early:
+                            stop_counts['completed'] += 1
+                        else:
+                            reason = (r.stop_reason or '').lower()
+                            if 'extinct' in reason or 'extinction' in reason:
+                                stop_counts['extinction'] += 1
+                            elif 'explod' in reason or 'maximum' in reason:
+                                stop_counts['explosion'] += 1
+                            else:
+                                stop_counts['other'] += 1
+
+                    labels = []
+                    sizes = []
+                    for k, v in stop_counts.items():
+                        if v > 0:
+                            labels.append(k)
+                            sizes.append(v)
+
+                    if sizes:
+                        fig, ax = plt.subplots(figsize=(5, 5))
+                        ax.pie(sizes, labels=labels, autopct='%1.0f', startangle=90, colors=plt.cm.Set2.colors)
+                        ax.set_title('Run stop reasons')
+                        plt.tight_layout()
+                        plt.savefig(output_dir / "stop_reasons_pie.png", dpi=200)
+                        plt.close()
+
+                    # Scatter: final population vs best fitness
+                    final_pops = []
+                    best_fitness = []
+                    for r in runs:
+                        if r.population_size:
+                            final_pops.append(r.population_size[-1])
+                        else:
+                            final_pops.append(0)
+                        if r.fitness_best:
+                            try:
+                                best_fitness.append(max(r.fitness_best))
+                            except Exception:
+                                best_fitness.append(np.nan)
+                        else:
+                            best_fitness.append(np.nan)
+
+                    if final_pops and any(np.isfinite(best_fitness)):
+                        fig, ax = plt.subplots(figsize=(6, 4))
+                        ax.scatter(final_pops, best_fitness, c='C4', alpha=0.8)
+                        ax.set_xlabel('Final population')
+                        ax.set_ylabel('Best fitness (per run)')
+                        ax.set_title('Final population vs best fitness')
+                        # annotate mean points
+                        if final_pops:
+                            ax.axvline(np.mean(final_pops), color='k', linestyle='--', alpha=0.6)
+                        plt.tight_layout()
+                        plt.savefig(output_dir / "finalpop_vs_bestfitness.png", dpi=200)
+                        plt.close()
+                except Exception as e:
+                    print(f"Warning: failed to produce additional recommended visuals: {e}")
+        except Exception as e:
+            print(f"Warning: failed to produce per-run distributions: {e}")
     
     def compare_experiments(
         self,
