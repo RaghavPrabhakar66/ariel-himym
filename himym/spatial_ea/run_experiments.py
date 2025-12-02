@@ -447,6 +447,98 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         save_trajectories=True,
         save_individual_runs=True,
     )
+
+    experiments['eventDriven_matingZone_assignedMating_probAge'] = ExperimentConfig(
+        experiment_name="eventDriven_matingZone_assignedMating_probAge",
+        num_runs=1,
+        
+        # Incubation
+        incubation_enabled=False,
+        
+        # Population parameters 
+        population_size=30,
+        num_generations=100,
+        stop_on_limits=True,
+        
+        # Selection parameters
+        pairing_method="mating_zone",
+        movement_bias="assigned_zone",
+        selection_method="probabilistic_age",
+        target_population_size=30,
+        pairing_radius=10,
+        offspring_radius=3.0,
+        max_age=15,
+
+        mating_zone_radius=2.0,
+        num_mating_zones=15,
+        zone_relocation_strategy="event_driven",
+        min_zone_distance=2.0,
+        
+        # Mutation/Crossover
+        mutation_rate=0.8,
+        mutation_strength=0.5,
+        add_connection_rate=0.05,
+        add_node_rate=0.03,
+        crossover_rate=0.9,
+        
+        # Simulation
+        simulation_time=30.0,
+        use_periodic_boundaries=True,
+        
+        # Output
+        save_snapshots=True,
+        save_trajectories=True,
+        save_individual_runs=True,
+    )
+
+
+    experiments['eventDriven_matingZone_assignedMating_energyBased'] = ExperimentConfig(
+        experiment_name="eventDriven_matingZone_assignedMating_energyBased",
+        num_runs=1,
+        
+        # Incubation
+        incubation_enabled=False,
+        
+        # Population parameters 
+        population_size=30,
+        num_generations=100,
+        stop_on_limits=True,
+        
+        # Selection parameters
+        pairing_method="mating_zone",
+        movement_bias="assigned_zone",
+        selection_method="energy_based",
+        pairing_radius=10,
+        offspring_radius=3.0,
+
+        enable_energy=True,
+        initial_energy=100.0,
+        energy_depletion_rate=10.0,
+        mating_energy_effect="cost",
+        mating_energy_amount=30.0,
+
+        mating_zone_radius=2.0,
+        num_mating_zones=15,
+        zone_relocation_strategy="event_driven",
+        min_zone_distance=2.0,
+        
+        # Mutation/Crossover
+        mutation_rate=0.8,
+        mutation_strength=0.5,
+        add_connection_rate=0.05,
+        add_node_rate=0.03,
+        crossover_rate=0.9,
+        
+        # Simulation
+        simulation_time=30.0,
+        use_periodic_boundaries=True,
+        
+        # Output
+        save_snapshots=True,
+        save_trajectories=True,
+        save_individual_runs=True,
+    )
+    
     
     # ===== Selection Method Experiments =====
     
