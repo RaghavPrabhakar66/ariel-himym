@@ -54,7 +54,7 @@ TAU_LIMIT = 0.6        # torque clamp for data.ctrl
 
 POP_SIZE = 60
 N_GENS = 80
-HIDDEN = 24            # hidden units in neural controller
+HIDDEN = 24            # hidden units in neural controller                              
 
 # Video config
 VIDEO_WIDTH = 720

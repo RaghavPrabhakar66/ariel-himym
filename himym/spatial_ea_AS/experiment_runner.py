@@ -1,0 +1,1247 @@
+"""
+Experiment runner for conducting multiple evolutionary runs with parameter sweeps.
+
+This module provides functionality to:
+1. Run multiple trials with the same or different parameters
+2. Handle early stopping (population extinction or explosion)
+3. Aggregate statistics across runs (mean, std, min, max)
+4. Save individual and aggregated results
+5. Generate comparative visualizations
+6. Parallel execution of independent trials using multiprocessing
+"""
+
+import gc
+import json
+import os
+import shutil
+from dataclasses import dataclass, field, asdict
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable
+from multiprocessing import Pool, cpu_count
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import yaml
+
+from ea_config import EAConfig, config
+
+
+@dataclass
+class ExperimentConfig:
+    """Configuration for a single experiment (potentially multiple runs)."""
+    
+    # Experiment identification
+    experiment_name: str
+    num_runs: int = 5
+    
+    # Incubation parameters
+    incubation_enabled: bool | None = None
+    incubation_num_generations: int | None = None
+    
+    # Population parameters
+    population_size: int | None = None
+    num_generations: int | None = None
+    max_population_limit: int | None = None
+    min_population_limit: int | None = None
+    stop_on_limits: bool | None = None
+    
+    # Selection parameters
+    pairing_method: str | None = None
+    movement_bias: str | None = None
+    selection_method: str | None = None
+    target_population_size: int | None = None
+    pairing_radius: float | None = None
+    offspring_radius: float | None = None
+    max_age: int | None = None
+    
+    # Mating zone parameters (excluding mating_zone_center)
+    mating_zone_radius: float | None = None
+    num_mating_zones: int | None = None
+    dynamic_mating_zones: bool | None = None
+    zone_change_interval: int | None = None
+    min_zone_distance: float | None = None
+    
+    # Energy parameters
+    enable_energy: bool | None = None
+    initial_energy: float | None = None
+    energy_depletion_rate: float | None = None
+    mating_energy_effect: str | None = None
+    mating_energy_amount: float | None = None
+    
+    # Mutation parameters (shared between incubation and spatial)
+    mutation_rate: float | None = None
+    mutation_strength: float | None = None
+    add_connection_rate: float | None = None
+    add_node_rate: float | None = None
+    
+    # Crossover parameters (shared between incubation and spatial)
+    crossover_rate: float | None = None
+    
+    # Incubation-specific parameters (only used if different from spatial)
+    incubation_tournament_size: int | None = None
+    incubation_elitism_count: int | None = None
+    incubation_use_directional_fitness: bool | None = None
+    incubation_target_distance_min: float | None = None
+    incubation_target_distance_max: float | None = None
+    incubation_progress_weight: float | None = None
+    
+    # Simulation parameters
+    simulation_time: float | None = None
+    use_periodic_boundaries: bool | None = None
+    
+    # Output settings
+    save_snapshots: bool = False
+    save_trajectories: bool = True
+    record_videos: bool = False
+    save_individual_runs: bool = False  # Save detailed data for each run (trajectories, figures, etc.)
+    
+    # Random seed (None = random)
+    random_seed: int | None = None
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return asdict(self)
+    
+    def apply_to_config(self, base_config: EAConfig) -> dict[str, Any]:
+        """
+        Create a config dictionary with experiment parameters applied.
+        
+        Returns:
+            Dictionary of parameter overrides
+        """
+        overrides = {}
+        
+        # Incubation parameters
+        if self.incubation_enabled is not None:
+            overrides['incubation.enabled'] = self.incubation_enabled
+        if self.incubation_num_generations is not None:
+            overrides['incubation.num_generations'] = self.incubation_num_generations
+        
+        # Population parameters
+        if self.population_size is not None:
+            overrides['population.size'] = self.population_size
+            # Share with incubation if enabled
+            if self.incubation_enabled:
+                overrides['incubation.population_size'] = self.population_size
+        if self.num_generations is not None:
+            overrides['population.num_generations'] = self.num_generations
+        if self.max_population_limit is not None:
+            overrides['population.max_population_limit'] = self.max_population_limit
+        if self.min_population_limit is not None:
+            overrides['population.min_population_limit'] = self.min_population_limit
+        if self.stop_on_limits is not None:
+            overrides['population.stop_on_limits'] = self.stop_on_limits
+        
+        # Selection parameters
+        if self.pairing_method is not None:
+            overrides['selection.pairing_method'] = self.pairing_method
+        if self.movement_bias is not None:
+            overrides['selection.movement_bias'] = self.movement_bias
+        if self.selection_method is not None:
+            overrides['selection.selection_method'] = self.selection_method
+        if self.target_population_size is not None:
+            overrides['selection.target_population_size'] = self.target_population_size
+        if self.pairing_radius is not None:
+            overrides['selection.pairing_radius'] = self.pairing_radius
+        if self.offspring_radius is not None:
+            overrides['selection.offspring_radius'] = self.offspring_radius
+        if self.max_age is not None:
+            overrides['selection.max_age'] = self.max_age
+        
+        # Mating zone parameters
+        if self.mating_zone_radius is not None:
+            overrides['selection.mating_zone_radius'] = self.mating_zone_radius
+        if self.num_mating_zones is not None:
+            overrides['selection.num_mating_zones'] = self.num_mating_zones
+        if self.dynamic_mating_zones is not None:
+            overrides['selection.dynamic_mating_zones'] = self.dynamic_mating_zones
+        if self.zone_change_interval is not None:
+            overrides['selection.zone_change_interval'] = self.zone_change_interval
+        if self.min_zone_distance is not None:
+            overrides['selection.min_zone_distance'] = self.min_zone_distance
+        
+        # Energy parameters
+        if self.enable_energy is not None:
+            overrides['selection.enable_energy'] = self.enable_energy
+        if self.initial_energy is not None:
+            overrides['selection.initial_energy'] = self.initial_energy
+        if self.energy_depletion_rate is not None:
+            overrides['selection.energy_depletion_rate'] = self.energy_depletion_rate
+        if self.mating_energy_effect is not None:
+            overrides['selection.mating_energy_effect'] = self.mating_energy_effect
+        if self.mating_energy_amount is not None:
+            overrides['selection.mating_energy_amount'] = self.mating_energy_amount
+        
+        # Mutation parameters (shared between incubation and spatial)
+        if self.mutation_rate is not None:
+            overrides['mutation.rate'] = self.mutation_rate
+            if self.incubation_enabled:
+                overrides['incubation.mutation_rate'] = self.mutation_rate
+        if self.mutation_strength is not None:
+            overrides['mutation.strength'] = self.mutation_strength
+            if self.incubation_enabled:
+                overrides['incubation.mutation_power'] = self.mutation_strength
+        if self.add_connection_rate is not None:
+            overrides['mutation.add_connection_rate'] = self.add_connection_rate
+            if self.incubation_enabled:
+                overrides['incubation.add_connection_rate'] = self.add_connection_rate
+        if self.add_node_rate is not None:
+            overrides['mutation.add_node_rate'] = self.add_node_rate
+            if self.incubation_enabled:
+                overrides['incubation.add_node_rate'] = self.add_node_rate
+        
+        # Crossover parameters (shared between incubation and spatial)
+        if self.crossover_rate is not None:
+            overrides['crossover.rate'] = self.crossover_rate
+            if self.incubation_enabled:
+                overrides['incubation.crossover_rate'] = self.crossover_rate
+        
+        # Incubation-specific parameters (only if different from spatial)
+        if self.incubation_tournament_size is not None:
+            overrides['incubation.tournament_size'] = self.incubation_tournament_size
+        if self.incubation_elitism_count is not None:
+            overrides['incubation.elitism_count'] = self.incubation_elitism_count
+        if self.incubation_use_directional_fitness is not None:
+            overrides['incubation.use_directional_fitness'] = self.incubation_use_directional_fitness
+        if self.incubation_target_distance_min is not None:
+            overrides['incubation.target_distance_min'] = self.incubation_target_distance_min
+        if self.incubation_target_distance_max is not None:
+            overrides['incubation.target_distance_max'] = self.incubation_target_distance_max
+        if self.incubation_progress_weight is not None:
+            overrides['incubation.progress_weight'] = self.incubation_progress_weight
+        
+        # Simulation parameters
+        if self.simulation_time is not None:
+            overrides['simulation.time'] = self.simulation_time
+        if self.use_periodic_boundaries is not None:
+            overrides['simulation.use_periodic_boundaries'] = self.use_periodic_boundaries
+        
+        # Video/output parameters
+        if self.save_snapshots is not None:
+            overrides['video.save_generation_snapshots'] = self.save_snapshots
+        if self.record_videos is not None:
+            overrides['video.record_generation_videos'] = self.record_videos
+        
+        return overrides
+
+
+@dataclass
+class RunResult:
+    """Results from a single evolutionary run."""
+    
+    run_id: int
+    experiment_name: str
+    
+    # Run outcome
+    completed_generations: int
+    stopped_early: bool
+    stop_reason: str
+    
+    # Statistics arrays (indexed by generation)
+    generations: list[int] = field(default_factory=list)
+    population_size: list[int] = field(default_factory=list)
+    fitness_best: list[float] = field(default_factory=list)
+    fitness_avg: list[float] = field(default_factory=list)
+    fitness_worst: list[float] = field(default_factory=list)
+    fitness_std: list[float] = field(default_factory=list)
+    
+    # Optional statistics
+    energy_avg: list[float] = field(default_factory=list)
+    age_avg: list[float] = field(default_factory=list)
+    mating_pairs: list[int] = field(default_factory=list)
+    
+    # Timing
+    duration_seconds: float = 0.0
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return asdict(self)
+    
+    def to_dataframe(self) -> pd.DataFrame:
+        """Convert to pandas DataFrame."""
+        data = {
+            'generation': self.generations,
+            'population_size': self.population_size,
+            'fitness_best': self.fitness_best,
+            'fitness_avg': self.fitness_avg,
+            'fitness_worst': self.fitness_worst,
+            'fitness_std': self.fitness_std,
+        }
+        
+        # Only add optional columns if they match the length of generations
+        num_gens = len(self.generations)
+        
+        if self.energy_avg and len(self.energy_avg) == num_gens:
+            data['energy_avg'] = self.energy_avg
+        if self.age_avg and len(self.age_avg) == num_gens:
+            data['age_avg'] = self.age_avg
+        if self.mating_pairs and len(self.mating_pairs) == num_gens:
+            data['mating_pairs'] = self.mating_pairs
+        
+        return pd.DataFrame(data)
+
+
+@dataclass
+class AggregatedResults:
+    """Aggregated results across multiple runs."""
+    
+    experiment_name: str
+    num_runs: int
+    
+    # Common generation axis (aligned across all runs)
+    generations: np.ndarray
+    
+    # Population size statistics
+    population_mean: np.ndarray
+    population_std: np.ndarray
+    population_min: np.ndarray
+    population_max: np.ndarray
+    
+    # Fitness statistics
+    fitness_best_mean: np.ndarray
+    fitness_best_std: np.ndarray
+    fitness_avg_mean: np.ndarray
+    fitness_avg_std: np.ndarray
+    
+    # Run completion statistics
+    runs_active: np.ndarray  # Number of runs still active at each generation
+    completion_rate: np.ndarray  # Fraction of runs that reached this generation
+    
+    # Early stopping analysis
+    num_extinctions: int = 0
+    num_explosions: int = 0
+    num_completed: int = 0
+    
+    def to_dataframe(self) -> pd.DataFrame:
+        """Convert to pandas DataFrame."""
+        data = {
+            'generation': self.generations,
+            'population_mean': self.population_mean,
+            'population_std': self.population_std,
+            'population_min': self.population_min,
+            'population_max': self.population_max,
+            'fitness_best_mean': self.fitness_best_mean,
+            'fitness_best_std': self.fitness_best_std,
+            'fitness_avg_mean': self.fitness_avg_mean,
+            'fitness_avg_std': self.fitness_avg_std,
+            'runs_active': self.runs_active,
+            'completion_rate': self.completion_rate,
+        }
+        return pd.DataFrame(data)
+
+
+# ============================================================================
+# Standalone Trial Runner for Multiprocessing
+# ============================================================================
+
+def _run_trial_subprocess(args: tuple) -> RunResult | None:
+    """
+    Standalone function to run a single trial in a separate process.
+    
+    This function is designed to be pickled and run in a subprocess pool.
+    It accepts all necessary configuration as serializable arguments and
+    does NOT rely on global config state.
+    
+    Args:
+        args: Tuple containing (experiment_config_dict, run_id, output_dir_str, 
+              base_config_path, verbose)
+    
+    Returns:
+        RunResult or None if error
+    """
+    import time
+    import traceback
+    from pathlib import Path
+    import numpy as np
+    import ea_config
+    from main_spatial_ea import SpatialEA
+    
+    # Unpack arguments
+    exp_config_dict, run_id, output_dir_str, base_config_path, verbose = args
+    
+    # Reconstruct ExperimentConfig
+    experiment_config = ExperimentConfig(**exp_config_dict)
+    output_dir = Path(output_dir_str)
+    
+    try:
+        start_time = time.time()
+        
+        # Create run-specific output directories
+        run_output = output_dir / f"run_{run_id:03d}"
+        run_output.mkdir(parents=True, exist_ok=True)
+        
+        # Override config paths for this run
+        figures_dir = run_output / "figures"
+        results_dir = run_output / "results"
+        video_dir = run_output / "videos"
+        
+        figures_dir.mkdir(exist_ok=True)
+        results_dir.mkdir(exist_ok=True)
+        video_dir.mkdir(exist_ok=True)
+        
+        # IMPORTANT: We cannot replace ea_config.config because other modules
+        # have already imported it with "from ea_config import config"
+        # Instead, we must modify the existing config object's internal state
+        import ea_config
+        config = ea_config.config
+        
+        # Reload the config from the base config file
+        with open(base_config_path, 'r') as f:
+            import yaml
+            config._config = yaml.safe_load(f)
+        
+        # Apply configuration overrides
+        overrides = experiment_config.apply_to_config(config)
+        
+        # Apply overrides to this process's config copy
+        original_values = {}
+        for key, value in overrides.items():
+            parts = key.split('.')
+            obj = config._config
+            for part in parts[:-1]:
+                obj = obj[part]
+            original_values[key] = obj[parts[-1]]
+            obj[parts[-1]] = value
+        
+        # Override output directories
+        original_figures = config._config['output']['figures_folder']
+        original_results = config._config['output']['results_folder']
+        original_videos = config._config['output']['video_folder']
+        
+        config._config['output']['figures_folder'] = str(figures_dir)
+        config._config['output']['results_folder'] = str(results_dir)
+        config._config['output']['video_folder'] = str(video_dir)
+        config._config['video']['save_generation_snapshots'] = experiment_config.save_snapshots
+        config._config['video']['record_generation_videos'] = experiment_config.record_videos
+        
+        # Set random seed to ensure different runs have different random states
+        # Use time-based seed if not specified to ensure variability across runs
+        if experiment_config.random_seed is not None:
+            seed = experiment_config.random_seed + run_id
+        else:
+            # Use a combination of time and run_id for a unique seed
+            import time
+            seed = int((time.time() * 1000000) % (2**31)) + run_id
+        np.random.seed(seed)
+        
+        if verbose:
+            print(f"\n[Worker {run_id}] Starting run {run_id + 1}")
+            print(f"[Worker {run_id}] Config - save_snapshots: {config.save_generation_snapshots}")
+            print(f"[Worker {run_id}] Config - record_videos: {config.record_generation_videos}")
+            print(f"[Worker {run_id}] Config - figures_folder: {config.figures_folder}")
+        
+        # NOTE: We skip compiling the robot spec here to avoid MuJoCo state
+        # corruption. The SpatialEA will create and compile its own robot specs
+        # during the simulation. We hardcode num_joints=8 for the gecko robot.
+        num_joints = 8  # gecko robot has 8 actuated joints
+        
+        # Create SpatialEA instance
+        spatial_ea = SpatialEA(num_joints=num_joints)
+        
+        # Run evolution
+        spatial_ea.run_evolution()
+        
+        # Collect results from data collector
+        dc = spatial_ea.data_collector
+        
+        # Create result
+        result = RunResult(
+            experiment_name=experiment_config.experiment_name,
+            run_id=run_id,
+            completed_generations=len(dc.generations),
+            stopped_early=dc.stopped_early,
+            stop_reason=dc.stop_reason if dc.stopped_early else "Completed",
+            generations=dc.generations.copy(),
+            population_size=dc.population_size.copy(),
+            fitness_best=dc.fitness_best.copy(),
+            fitness_avg=dc.fitness_avg.copy(),
+            fitness_worst=dc.fitness_worst.copy(),
+            fitness_std=dc.fitness_std.copy(),
+            energy_avg=dc.energy_avg.copy() if dc.energy_avg else [],
+            age_avg=dc.age_avg.copy() if dc.age_avg else [],
+            mating_pairs=dc.mating_pairs.copy() if dc.mating_pairs else [],
+            duration_seconds=time.time() - start_time
+        )
+        
+        # Save individual run results
+        import json
+        with open(run_output / "results.json", 'w') as f:
+            json.dump(result.to_dict(), f, indent=2)
+        
+        result.to_dataframe().to_csv(run_output / "statistics.csv", index=False)
+        
+        # Clean up detailed outputs if not saving individual runs
+        if not experiment_config.save_individual_runs:
+            # Remove trajectory plots and other detailed outputs
+            if figures_dir.exists():
+                for file in figures_dir.glob('*'):
+                    file.unlink()
+            
+            # Remove genotype/controller saves
+            if results_dir.exists():
+                for file in results_dir.glob('*'):
+                    file.unlink()
+            
+            # Remove videos
+            if video_dir.exists():
+                for file in video_dir.glob('*'):
+                    file.unlink()
+        
+        if verbose:
+            print(f"\n[Worker {run_id}] {'='*60}")
+            print(f"[Worker {run_id}] Run {run_id + 1} completed:")
+            print(f"[Worker {run_id}]   Generations: {result.completed_generations}/{config.num_generations}")
+            print(f"[Worker {run_id}]   Status: {result.stop_reason}")
+            print(f"[Worker {run_id}]   Duration: {result.duration_seconds:.1f}s")
+            print(f"[Worker {run_id}]   Final population: {result.population_size[-1] if result.population_size else 0}")
+            print(f"[Worker {run_id}]   Best fitness: {max(result.fitness_best) if result.fitness_best else 0:.4f}")
+            if not experiment_config.save_individual_runs:
+                print(f"[Worker {run_id}]   Note: Detailed outputs not saved")
+            print(f"[Worker {run_id}] {'='*60}\n")
+        
+        # Cleanup
+        del spatial_ea
+        gc.collect()
+        
+        return result
+        
+    except Exception as e:
+        print(f"\n[Worker {run_id}] ERROR in run {run_id + 1}: {e}")
+        traceback.print_exc()
+        return None
+
+
+# ============================================================================
+# ExperimentRunner Class
+# ============================================================================
+
+
+class ExperimentRunner:
+    """
+    Manages multiple evolutionary algorithm runs with parameter variations.
+    """
+    
+    def __init__(
+        self,
+        base_output_dir: str = "__experiments__",
+        base_config_path: str | None = None
+    ):
+        """
+        Initialize the experiment runner.
+        
+        Args:
+            base_output_dir: Root directory for all experiment outputs
+            base_config_path: Path to base configuration file (default: ea_config.yaml)
+        """
+        self.base_output_dir = Path(base_output_dir)
+        self.base_output_dir.mkdir(exist_ok=True)
+        
+        self.base_config_path = base_config_path or "himym/spatial_ea/ea_config.yaml"
+        self.experiments: dict[str, list[RunResult]] = {}
+        
+    def run_single_trial(
+        self,
+        experiment_config: ExperimentConfig,
+        run_id: int,
+        output_dir: Path,
+        verbose: bool = True
+    ) -> RunResult:
+        """
+        Run a single evolutionary trial.
+        
+        Args:
+            experiment_config: Experiment configuration
+            run_id: Run identifier
+            output_dir: Output directory for this specific run
+            verbose: Whether to print progress
+            
+        Returns:
+            RunResult with statistics
+        """
+        import time
+        from main_spatial_ea import SpatialEA
+        
+        start_time = time.time()
+        
+        # Create run-specific output directories
+        run_output = output_dir / f"run_{run_id:03d}"
+        run_output.mkdir(parents=True, exist_ok=True)
+        
+        # Override config paths for this run
+        figures_dir = run_output / "figures"
+        results_dir = run_output / "results"
+        video_dir = run_output / "videos"
+        
+        figures_dir.mkdir(exist_ok=True)
+        results_dir.mkdir(exist_ok=True)
+        video_dir.mkdir(exist_ok=True)
+        
+        # Apply configuration overrides
+        overrides = experiment_config.apply_to_config(config)
+        
+        # Temporarily modify config (save and restore)
+        original_values = {}
+        for key, value in overrides.items():
+            parts = key.split('.')
+            obj = config._config
+            for part in parts[:-1]:
+                obj = obj[part]
+            original_values[key] = obj[parts[-1]]
+            obj[parts[-1]] = value
+        
+        # Override output directories
+        original_figures = config._config['output']['figures_folder']
+        original_results = config._config['output']['results_folder']
+        original_videos = config._config['output']['video_folder']
+        
+        config._config['output']['figures_folder'] = str(figures_dir)
+        config._config['output']['results_folder'] = str(results_dir)
+        config._config['output']['video_folder'] = str(video_dir)
+        config._config['video']['save_generation_snapshots'] = experiment_config.save_snapshots
+        config._config['video']['record_generation_videos'] = experiment_config.record_videos
+        
+        # Set random seed to ensure different runs have different random states
+        # Use time-based seed if not specified to ensure variability across runs
+        if experiment_config.random_seed is not None:
+            seed = experiment_config.random_seed + run_id
+        else:
+            # Use a combination of time and run_id for a unique seed
+            import time
+            seed = int((time.time() * 1000000) % (2**31)) + run_id
+        np.random.seed(seed)
+        
+        try:
+            if verbose:
+                print(f"\n{'='*60}")
+                print(f"Run {run_id + 1}/{experiment_config.num_runs}: {experiment_config.experiment_name}")
+                print(f"{'='*60}")
+            
+            # Setup robot
+            # NOTE: We skip compiling the robot spec here to avoid MuJoCo state
+            # corruption. The SpatialEA will create and compile its own robot specs
+            # during the simulation. We hardcode num_joints=8 for the gecko robot.
+            num_joints = 8  # gecko robot has 8 actuated joints
+            
+            # Create and run EA
+            spatial_ea = SpatialEA(
+                population_size=config.population_size,
+                num_generations=config.num_generations,
+                num_joints=num_joints
+            )
+            
+            spatial_ea.run_evolution()
+            
+            # Collect results from data collector
+            dc = spatial_ea.data_collector
+            
+            result = RunResult(
+                run_id=run_id,
+                experiment_name=experiment_config.experiment_name,
+                completed_generations=len(dc.generations),
+                stopped_early=dc.stopped_early,
+                stop_reason=dc.stop_reason if dc.stopped_early else "Completed",
+                generations=dc.generations.copy(),
+                population_size=dc.population_size.copy(),
+                fitness_best=dc.fitness_best.copy(),
+                fitness_avg=dc.fitness_avg.copy(),
+                fitness_worst=dc.fitness_worst.copy(),
+                fitness_std=dc.fitness_std.copy(),
+                energy_avg=dc.energy_avg.copy() if dc.energy_avg else [],
+                age_avg=dc.age_avg.copy() if dc.age_avg else [],
+                mating_pairs=dc.mating_pairs.copy() if dc.mating_pairs else [],
+                duration_seconds=time.time() - start_time
+            )
+            
+            # Save individual run results (always save minimal stats)
+            with open(run_output / "results.json", 'w') as f:
+                json.dump(result.to_dict(), f, indent=2)
+            
+            result.to_dataframe().to_csv(run_output / "statistics.csv", index=False)
+            
+            # Clean up detailed outputs if not saving individual runs
+            if not experiment_config.save_individual_runs:
+                # Remove trajectory plots and other detailed outputs
+                if figures_dir.exists():
+                    for file in figures_dir.glob('*'):
+                        file.unlink()
+                    # Keep the directory but empty
+                
+                # Remove genotype/controller saves
+                if results_dir.exists():
+                    for file in results_dir.glob('*'):
+                        file.unlink()
+                
+                # Remove videos
+                if video_dir.exists():
+                    for file in video_dir.glob('*'):
+                        file.unlink()
+            
+            if verbose:
+                print(f"\n{'='*60}")
+                print(f"Run {run_id + 1} completed:")
+                print(f"  Generations: {result.completed_generations}/{config.num_generations}")
+                print(f"  Status: {result.stop_reason}")
+                print(f"  Duration: {result.duration_seconds:.1f}s")
+                print(f"  Final population: {result.population_size[-1] if result.population_size else 0}")
+                print(f"  Best fitness: {max(result.fitness_best) if result.fitness_best else 0:.4f}")
+                if not experiment_config.save_individual_runs:
+                    print(f"  Note: Detailed outputs not saved (save_individual_runs=False)")
+                print(f"{'='*60}\n")
+            
+            # Cleanup spatial_ea to release MuJoCo resources
+            del spatial_ea
+            
+            # Force garbage collection to ensure cleanup
+            gc.collect()
+            
+            return result
+            
+        finally:
+            # Restore original config values
+            for key, value in original_values.items():
+                parts = key.split('.')
+                obj = config._config
+                for part in parts[:-1]:
+                    obj = obj[part]
+                obj[parts[-1]] = value
+            
+            config._config['output']['figures_folder'] = original_figures
+            config._config['output']['results_folder'] = original_results
+            config._config['output']['video_folder'] = original_videos
+    
+    def run_experiment(
+        self,
+        experiment_config: ExperimentConfig,
+        verbose: bool = True
+    ) -> list[RunResult]:
+        """
+        Run a complete experiment (multiple trials with same parameters).
+        
+        Args:
+            experiment_config: Configuration for the experiment
+            verbose: Whether to print progress
+            
+        Returns:
+            List of RunResult objects
+        """
+        # Create experiment directory
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        experiment_dir = self.base_output_dir / f"{experiment_config.experiment_name}_{timestamp}"
+        experiment_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save experiment configuration
+        with open(experiment_dir / "experiment_config.json", 'w') as f:
+            json.dump(experiment_config.to_dict(), f, indent=2)
+        
+        # Copy base config for reference
+        shutil.copy2(self.base_config_path, experiment_dir / "base_config.yaml")
+        
+        if verbose:
+            print(f"\n{'#'*60}")
+            print(f"# EXPERIMENT: {experiment_config.experiment_name}")
+            print(f"# Runs: {experiment_config.num_runs}")
+            print(f"# Output: {experiment_dir}")
+            print(f"{'#'*60}\n")
+        
+        # Run all trials
+        results = []
+        for run_id in range(experiment_config.num_runs):
+            try:
+                result = self.run_single_trial(
+                    experiment_config=experiment_config,
+                    run_id=run_id,
+                    output_dir=experiment_dir,
+                    verbose=verbose
+                )
+                results.append(result)
+            except Exception as e:
+                print(f"ERROR in run {run_id + 1}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        # Store results
+        self.experiments[experiment_config.experiment_name] = results
+        
+        # Aggregate and visualize
+        if results:
+            aggregated = self.aggregate_results(results)
+            self.save_aggregated_results(aggregated, experiment_dir)
+            self.visualize_aggregated_results(aggregated, experiment_dir)
+        
+        if verbose:
+            print(f"\n{'#'*60}")
+            print(f"# EXPERIMENT COMPLETE: {experiment_config.experiment_name}")
+            print(f"# Successful runs: {len(results)}/{experiment_config.num_runs}")
+            print(f"{'#'*60}\n")
+        
+        return results
+    
+    def run_experiment_parallel(
+        self,
+        experiment_config: ExperimentConfig,
+        num_workers: int | None = None,
+        verbose: bool = True
+    ) -> list[RunResult]:
+        """
+        Run a complete experiment with PARALLEL execution of trials.
+        
+        Uses multiprocessing to run multiple independent trials simultaneously.
+        Each trial runs in its own process with isolated memory space, avoiding
+        MuJoCo state corruption issues.
+        
+        Args:
+            experiment_config: Configuration for the experiment
+            num_workers: Number of parallel workers (default: cpu_count - 1)
+            verbose: Whether to print progress
+            
+        Returns:
+            List of RunResult objects
+        """
+        from multiprocessing import Pool, cpu_count
+        
+        # Determine number of workers
+        if num_workers is None:
+            num_workers = max(1, cpu_count() - 1)  # Leave one core free
+        
+        num_workers = min(num_workers, experiment_config.num_runs)  # Don't spawn more than needed
+        
+        # Create experiment directory
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        experiment_dir = self.base_output_dir / f"{experiment_config.experiment_name}_{timestamp}"
+        experiment_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save experiment configuration
+        with open(experiment_dir / "experiment_config.json", 'w') as f:
+            json.dump(experiment_config.to_dict(), f, indent=2)
+        
+        # Copy base config for reference
+        shutil.copy2(self.base_config_path, experiment_dir / "base_config.yaml")
+        
+        if verbose:
+            print(f"\n{'#'*60}")
+            print(f"# PARALLEL EXPERIMENT: {experiment_config.experiment_name}")
+            print(f"# Runs: {experiment_config.num_runs}")
+            print(f"# Workers: {num_workers}")
+            print(f"# Output: {experiment_dir}")
+            print(f"{'#'*60}\n")
+        
+        # Prepare arguments for each trial
+        trial_args = []
+        for run_id in range(experiment_config.num_runs):
+            args = (
+                experiment_config.to_dict(),
+                run_id,
+                str(experiment_dir),
+                self.base_config_path,
+                verbose
+            )
+            trial_args.append(args)
+        
+        # Run trials in parallel
+        results = []
+        pool = None
+        try:
+            pool = Pool(processes=num_workers)
+            if verbose:
+                print(f"Starting {experiment_config.num_runs} trials across {num_workers} workers...")
+                print("(Progress messages will appear as workers complete)\n")
+            
+            # Map trials to workers
+            results_with_none = pool.map(_run_trial_subprocess, trial_args)
+            
+            # Filter out None results (failures)
+            results = [r for r in results_with_none if r is not None]
+            
+            pool.close()
+            pool.join()
+                
+        except KeyboardInterrupt:
+            print("\n\nParallel execution interrupted by user!")
+            if pool:
+                pool.terminate()
+                pool.join()
+            raise
+        except Exception as e:
+            print(f"\n\nError in parallel execution: {e}")
+            if pool:
+                pool.terminate()
+                pool.join()
+            import traceback
+            traceback.print_exc()
+        
+        # Store results
+        self.experiments[experiment_config.experiment_name] = results
+        
+        # Aggregate and visualize
+        if results:
+            aggregated = self.aggregate_results(results)
+            self.save_aggregated_results(aggregated, experiment_dir)
+            self.visualize_aggregated_results(aggregated, experiment_dir)
+        
+        if verbose:
+            print(f"\n{'#'*60}")
+            print(f"# PARALLEL EXPERIMENT COMPLETE: {experiment_config.experiment_name}")
+            print(f"# Successful runs: {len(results)}/{experiment_config.num_runs}")
+            print(f"# Workers used: {num_workers}")
+            if len(results) < experiment_config.num_runs:
+                print(f"# WARNING: {experiment_config.num_runs - len(results)} runs failed")
+            print(f"{'#'*60}\n")
+        
+        return results
+    
+    def aggregate_results(
+        self,
+        results: list[RunResult]
+    ) -> AggregatedResults:
+        """
+        Aggregate statistics across multiple runs.
+        
+        Handles variable-length runs due to early stopping by:
+        1. Finding maximum generation reached across all runs
+        2. Padding shorter runs with NaN
+        3. Computing statistics while ignoring NaN values
+        
+        Args:
+            results: List of RunResult objects
+            
+        Returns:
+            AggregatedResults object
+        """
+        if not results:
+            raise ValueError("No results to aggregate")
+        
+        # Find maximum generation reached
+        max_gens = max(len(r.generations) for r in results)
+        generations = np.arange(max_gens)
+        
+        # Initialize arrays for each statistic
+        population_data = np.full((len(results), max_gens), np.nan)
+        fitness_best_data = np.full((len(results), max_gens), np.nan)
+        fitness_avg_data = np.full((len(results), max_gens), np.nan)
+        
+        # Track early stopping
+        num_extinctions = 0
+        num_explosions = 0
+        num_completed = 0
+        
+        # Fill data arrays
+        for i, result in enumerate(results):
+            n_gens = len(result.generations)
+            population_data[i, :n_gens] = result.population_size
+            fitness_best_data[i, :n_gens] = result.fitness_best
+            fitness_avg_data[i, :n_gens] = result.fitness_avg
+            
+            # Categorize stopping reason
+            if result.stopped_early:
+                if "extinction" in result.stop_reason.lower():
+                    num_extinctions += 1
+                elif "maximum" in result.stop_reason.lower():
+                    num_explosions += 1
+            else:
+                num_completed += 1
+        
+        # Compute statistics (ignoring NaN)
+        with np.errstate(invalid='ignore'):  # Suppress warnings for all-NaN slices
+            population_mean = np.nanmean(population_data, axis=0)
+            population_std = np.nanstd(population_data, axis=0)
+            population_min = np.nanmin(population_data, axis=0)
+            population_max = np.nanmax(population_data, axis=0)
+            
+            fitness_best_mean = np.nanmean(fitness_best_data, axis=0)
+            fitness_best_std = np.nanstd(fitness_best_data, axis=0)
+            fitness_avg_mean = np.nanmean(fitness_avg_data, axis=0)
+            fitness_avg_std = np.nanstd(fitness_avg_data, axis=0)
+            
+            # Count active runs at each generation
+            runs_active = np.sum(~np.isnan(population_data), axis=0)
+            completion_rate = runs_active / len(results)
+        
+        return AggregatedResults(
+            experiment_name=results[0].experiment_name,
+            num_runs=len(results),
+            generations=generations,
+            population_mean=population_mean,
+            population_std=population_std,
+            population_min=population_min,
+            population_max=population_max,
+            fitness_best_mean=fitness_best_mean,
+            fitness_best_std=fitness_best_std,
+            fitness_avg_mean=fitness_avg_mean,
+            fitness_avg_std=fitness_avg_std,
+            runs_active=runs_active,
+            completion_rate=completion_rate,
+            num_extinctions=num_extinctions,
+            num_explosions=num_explosions,
+            num_completed=num_completed
+        )
+    
+    def save_aggregated_results(
+        self,
+        aggregated: AggregatedResults,
+        output_dir: Path
+    ) -> None:
+        """Save aggregated results to files."""
+        # Save as CSV
+        df = aggregated.to_dataframe()
+        df.to_csv(output_dir / "aggregated_statistics.csv", index=False)
+        
+        # Save summary statistics
+        summary = {
+            'experiment_name': aggregated.experiment_name,
+            'num_runs': aggregated.num_runs,
+            'num_completed': aggregated.num_completed,
+            'num_extinctions': aggregated.num_extinctions,
+            'num_explosions': aggregated.num_explosions,
+            'max_generations_reached': int(np.max(aggregated.generations[aggregated.runs_active > 0])),
+            'final_population_mean': float(aggregated.population_mean[-1]) if not np.isnan(aggregated.population_mean[-1]) else None,
+            'best_fitness_achieved': float(np.nanmax(aggregated.fitness_best_mean)),
+        }
+        
+        with open(output_dir / "summary.json", 'w') as f:
+            json.dump(summary, f, indent=2)
+    
+    def visualize_aggregated_results(
+        self,
+        aggregated: AggregatedResults,
+        output_dir: Path
+    ) -> None:
+        """Create comprehensive visualization of aggregated results."""
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        fig.suptitle(f"Experiment: {aggregated.experiment_name}\n"
+                    f"({aggregated.num_runs} runs, "
+                    f"{aggregated.num_completed} completed, "
+                    f"{aggregated.num_extinctions} extinct, "
+                    f"{aggregated.num_explosions} exploded)",
+                    fontsize=14, fontweight='bold')
+        
+        gens = aggregated.generations
+        
+        # Plot 1: Population size over time
+        ax = axes[0, 0]
+        ax.plot(gens, aggregated.population_mean, 'b-', linewidth=2, label='Mean')
+        ax.fill_between(
+            gens,
+            aggregated.population_mean - aggregated.population_std,
+            aggregated.population_mean + aggregated.population_std,
+            alpha=0.3, color='b', label='±1 SD'
+        )
+        ax.plot(gens, aggregated.population_min, 'r--', alpha=0.5, label='Min')
+        ax.plot(gens, aggregated.population_max, 'g--', alpha=0.5, label='Max')
+        ax.set_xlabel('Generation')
+        ax.set_ylabel('Population Size')
+        ax.set_title('Population Dynamics')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 2: Fitness over time
+        ax = axes[0, 1]
+        ax.plot(gens, aggregated.fitness_best_mean, 'g-', linewidth=2, label='Best (mean)')
+        ax.fill_between(
+            gens,
+            aggregated.fitness_best_mean - aggregated.fitness_best_std,
+            aggregated.fitness_best_mean + aggregated.fitness_best_std,
+            alpha=0.3, color='g', label='Best ±1 SD'
+        )
+        ax.plot(gens, aggregated.fitness_avg_mean, 'b-', linewidth=2, label='Avg (mean)')
+        ax.fill_between(
+            gens,
+            aggregated.fitness_avg_mean - aggregated.fitness_avg_std,
+            aggregated.fitness_avg_mean + aggregated.fitness_avg_std,
+            alpha=0.3, color='b', label='Avg ±1 SD'
+        )
+        ax.set_xlabel('Generation')
+        ax.set_ylabel('Fitness')
+        ax.set_title('Fitness Evolution')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 3: Run completion rate
+        ax = axes[1, 0]
+        ax.plot(gens, aggregated.completion_rate * 100, 'r-', linewidth=2)
+        ax.fill_between(gens, 0, aggregated.completion_rate * 100, alpha=0.3, color='r')
+        ax.set_xlabel('Generation')
+        ax.set_ylabel('Runs Active (%)')
+        ax.set_title('Run Survival Rate')
+        ax.set_ylim([0, 105])
+        ax.grid(True, alpha=0.3)
+        
+        # Add annotation for key milestones
+        for pct in [75, 50, 25]:
+            idx = np.where(aggregated.completion_rate <= pct/100)[0]
+            if len(idx) > 0:
+                gen = gens[idx[0]]
+                ax.axvline(gen, color='gray', linestyle='--', alpha=0.5)
+                ax.text(gen, pct, f' {pct}%', fontsize=9, va='center')
+        
+        # Plot 4: Active runs count
+        ax = axes[1, 1]
+        ax.bar(gens, aggregated.runs_active, color='steelblue', alpha=0.7)
+        ax.set_xlabel('Generation')
+        ax.set_ylabel('Number of Active Runs')
+        ax.set_title('Active Runs per Generation')
+        ax.set_ylim([0, aggregated.num_runs * 1.1])
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / "aggregated_results.png", dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    def compare_experiments(
+        self,
+        experiment_names: list[str],
+        output_path: Path | str | None = None
+    ) -> None:
+        """
+        Create comparative visualizations across multiple experiments.
+        
+        Args:
+            experiment_names: List of experiment names to compare
+            output_path: Path to save comparison plot
+        """
+        if output_path is None:
+            output_path = self.base_output_dir / "experiment_comparison.png"
+        
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        fig.suptitle("Experiment Comparison", fontsize=14, fontweight='bold')
+        
+        colors = plt.cm.tab10(np.linspace(0, 1, len(experiment_names)))
+        
+        for exp_name, color in zip(experiment_names, colors):
+            if exp_name not in self.experiments:
+                print(f"Warning: Experiment '{exp_name}' not found")
+                continue
+            
+            results = self.experiments[exp_name]
+            aggregated = self.aggregate_results(results)
+            
+            gens = aggregated.generations
+            
+            # Population
+            axes[0, 0].plot(gens, aggregated.population_mean, 
+                           color=color, linewidth=2, label=exp_name)
+            axes[0, 0].fill_between(
+                gens,
+                aggregated.population_mean - aggregated.population_std,
+                aggregated.population_mean + aggregated.population_std,
+                alpha=0.2, color=color
+            )
+            
+            # Fitness
+            axes[0, 1].plot(gens, aggregated.fitness_best_mean,
+                           color=color, linewidth=2, label=exp_name)
+            
+            # Completion rate
+            axes[1, 0].plot(gens, aggregated.completion_rate * 100,
+                           color=color, linewidth=2, label=exp_name)
+            
+            # Final statistics bar chart
+            axes[1, 1].bar(exp_name, aggregated.num_completed,
+                          color=color, alpha=0.7, label='Completed')
+        
+        axes[0, 0].set_xlabel('Generation')
+        axes[0, 0].set_ylabel('Population Size')
+        axes[0, 0].set_title('Population Dynamics')
+        axes[0, 0].legend()
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        axes[0, 1].set_xlabel('Generation')
+        axes[0, 1].set_ylabel('Best Fitness')
+        axes[0, 1].set_title('Fitness Evolution')
+        axes[0, 1].legend()
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        axes[1, 0].set_xlabel('Generation')
+        axes[1, 0].set_ylabel('Runs Active (%)')
+        axes[1, 0].set_title('Run Survival Rate')
+        axes[1, 0].legend()
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        axes[1, 1].set_ylabel('Number of Runs')
+        axes[1, 1].set_title('Completion Statistics')
+        axes[1, 1].legend()
+        
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Comparison plot saved to: {output_path}")
+
+
+def create_example_experiments() -> list[ExperimentConfig]:
+    """Create example experiment configurations for common scenarios."""
+    
+    experiments = []
+    
+    # Experiment 1: Baseline (random pairing, no movement bias)
+    experiments.append(ExperimentConfig(
+        experiment_name="baseline_random",
+        num_runs=5,
+        pairing_method="random",
+        movement_bias="none",
+        population_size=10,
+        num_generations=50
+    ))
+    
+    # Experiment 2: Proximity pairing with nearest neighbor
+    experiments.append(ExperimentConfig(
+        experiment_name="proximity_nn",
+        num_runs=5,
+        pairing_method="proximity_pairing",
+        movement_bias="nearest_neighbor",
+        population_size=10,
+        num_generations=50
+    ))
+    
+    # Experiment 3: Mating zones with zone targeting
+    experiments.append(ExperimentConfig(
+        experiment_name="mating_zones",
+        num_runs=5,
+        pairing_method="mating_zone",
+        movement_bias="nearest_zone",
+        population_size=10,
+        num_generations=50
+    ))
+    
+    # Experiment 4: Energy-based selection
+    experiments.append(ExperimentConfig(
+        experiment_name="energy_based",
+        num_runs=5,
+        selection_method="energy_based",
+        enable_energy=True,
+        initial_energy=100.0,
+        energy_depletion_rate=10.0,
+        mating_energy_effect="restore",
+        population_size=10,
+        num_generations=50
+    ))
+    
+    return experiments
+
+
+if __name__ == "__main__":
+    """Example usage of the experiment runner."""
+    
+    # Create runner
+    runner = ExperimentRunner(base_output_dir="__experiments__")
+    
+    # Get example experiments
+    experiments = create_example_experiments()
+    
+    # Run first experiment as a test
+    print("Running example experiment...")
+    results = runner.run_experiment(experiments[0], verbose=True)
+    
+    print(f"\nExample complete! Check __experiments__/ for results.")
+    print(f"To run all experiments, uncomment the loop below.")
+    
+    # Uncomment to run all experiments:
+    # for exp_config in experiments:
+    #     runner.run_experiment(exp_config, verbose=True)
+    # 
+    # runner.compare_experiments(
+    #     [exp.experiment_name for exp in experiments],
+    #     output_path=runner.base_output_dir / "all_experiments_comparison.png"
+    # )

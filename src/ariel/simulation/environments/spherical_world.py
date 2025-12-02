@@ -3,7 +3,9 @@ SphericalWorld environment specification for ARIEL
 --------------------------------------------------
 
 - Spherical planet (center at origin, radius R).
-- True radial gravity (inward toward center).
+- Radial gravity that stabilizes bodies *on* the spherical shell:
+    * if r >= R : pull inward toward center (like real gravity)
+    * if r <  R : push outward back toward the shell (safety clamp)
 - Safe, single-attach robot spawn (no temp attachment in main spec).
 - Optional bbox-based z correction (only when safe).
 - Warm-start settle helper to let contacts form physically.
@@ -20,13 +22,14 @@ USE_DEGREES = False
 class SphericalWorld:
     def __init__(
         self,
-        radius: float = 5.0,
-        friction: tuple[float, float, float] = (2.0, 0.5, 0.1),
+        radius: float = 10.0,
+        friction: tuple[float, float, float] = (10.0, 5.0, 1), 
         rgba: tuple[float, float, float, float] = (0.5, 0.8, 1.0, 1.0),
-        gravity: float = 9.81,               # magnitude (we apply inward)
+        gravity: float = 80.0,            
         radial_gravity: bool = True,
         light_settings: dict | None = None,
     ) -> None:
+
         self.radius = float(radius)
         self.friction = friction
         self.rgba = rgba
@@ -97,7 +100,10 @@ class SphericalWorld:
             material="planet_mat",
             size=[self.radius, 0.0, 0.0],  # MuJoCo expects 3-size array for sphere; only first is radius
             rgba=self.rgba,
-            friction=self.friction,
+            friction=self.friction,       # boosted friction for locomotion
+            contype=1,                    # make sure it actually collides
+            conaffinity=1,
+            condim=3,
         )
 
     # -------------------------------------------------------------------------
@@ -170,7 +176,9 @@ class SphericalWorld:
     # -------------------------------------------------------------------------
     def apply_radial_gravity(self, data: mujoco.MjData):
         """
-        Apply inward force m*g along -normalize(xipos).
+        Apply *stabilizing* radial gravity:
+          - if r >= R : pull inward (toward center)
+          - if r <  R : push outward (back toward shell)
         IMPORTANT: reset xfrc_applied each step to avoid accumulation.
         """
         assert self.model is not None, "Call attach_model(model) first."
@@ -181,16 +189,30 @@ class SphericalWorld:
         d.xfrc_applied[:, :] = 0.0
 
         g = self.gmag
+        R = self.radius
+
         for i in range(m.nbody):
+            mass = m.body_mass[i]
+            # skip massless bodies (world, lights, etc.)
+            if mass <= 0.0:
+                continue
+
             pos = d.xipos[i]
             if not np.all(np.isfinite(pos)):
                 continue
+
             r = np.linalg.norm(pos)
             if r < 1e-8:
                 continue
-            dir_in = -pos / r
-            mass = m.body_mass[i]
-            d.xfrc_applied[i, :3] = dir_in * mass * g
+
+            # Outside or on the sphere: pull inward (like real gravity).
+            # Inside the sphere: push outward to prevent tunneling / falling to center.
+            if r >= R:
+                direction = -pos / r    # inward
+            else:
+                direction = pos / r     # outward safety
+
+            d.xfrc_applied[i, :3] = direction * mass * g
 
     def step(self, data: mujoco.MjData):
         """One simulation step with radial gravity (if enabled)."""
