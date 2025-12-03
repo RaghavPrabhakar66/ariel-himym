@@ -361,6 +361,21 @@ def _run_trial_subprocess(args: tuple) -> RunResult | None:
     Returns:
         RunResult or None if error
     """
+    # Ensure MUJOCO_GL is set BEFORE any mujoco import (headless HPC nodes).
+    # Prefer EGL then fall back to OSMesa. Respect externally-set value.
+    import os
+    import importlib
+    if not os.environ.get("MUJOCO_GL"):
+        os.environ["MUJOCO_GL"] = "egl"
+        try:
+            # If mujoco is importable, try a lightweight import to validate backend.
+            # If it fails, we will fall back to osmesa.
+            mujoco_spec = importlib.util.find_spec("mujoco")
+            if mujoco_spec is not None:
+                import mujoco  # type: ignore
+        except Exception:
+            os.environ["MUJOCO_GL"] = "osmesa"
+
     import time
     import traceback
     from pathlib import Path
@@ -1254,18 +1269,20 @@ class ExperimentRunner:
     
     def aggregate_results(
         self,
-        results: list[RunResult]
+        results: list[RunResult],
+        padding_strategy: str = "forward_fill"
     ) -> AggregatedResults:
         """
         Aggregate statistics across multiple runs.
         
-        Handles variable-length runs due to early stopping by:
-        1. Finding maximum generation reached across all runs
-        2. Padding shorter runs with NaN
-        3. Computing statistics while ignoring NaN values
+        Handles variable-length runs due to early stopping with configurable padding:
+        - 'nan': Use NaN for missing values (only average active runs)
+        - 'forward_fill': Carry last observed value forward (default)
+        - 'terminal_state': Use 0 for extinction, max_limit for explosion
         
         Args:
             results: List of RunResult objects
+            padding_strategy: How to handle early-stopped runs
             
         Returns:
             AggregatedResults object
@@ -1282,6 +1299,10 @@ class ExperimentRunner:
         fitness_best_data = np.full((len(results), max_gens), np.nan)
         fitness_avg_data = np.full((len(results), max_gens), np.nan)
         
+        # Track which runs are actually active (not padded) at each generation
+        # This is separate from the data arrays which may be padded for visualization
+        truly_active = np.zeros((len(results), max_gens), dtype=bool)
+        
         # Track early stopping
         num_extinctions = 0
         num_explosions = 0
@@ -1293,6 +1314,30 @@ class ExperimentRunner:
             population_data[i, :n_gens] = result.population_size
             fitness_best_data[i, :n_gens] = result.fitness_best
             fitness_avg_data[i, :n_gens] = result.fitness_avg
+            
+            # Mark generations where this run was truly active (actually running)
+            truly_active[i, :n_gens] = True
+            
+            # Apply padding strategy for early-stopped runs
+            if n_gens < max_gens and padding_strategy != "nan":
+                if padding_strategy == "forward_fill":
+                    # Carry last observed value forward
+                    population_data[i, n_gens:] = result.population_size[-1] if result.population_size else np.nan
+                    fitness_best_data[i, n_gens:] = result.fitness_best[-1] if result.fitness_best else np.nan
+                    fitness_avg_data[i, n_gens:] = result.fitness_avg[-1] if result.fitness_avg else np.nan
+                    
+                elif padding_strategy == "terminal_state":
+                    # Use terminal state based on stop reason
+                    if "extinction" in result.stop_reason.lower():
+                        population_data[i, n_gens:] = 0
+                        fitness_best_data[i, n_gens:] = 0
+                        fitness_avg_data[i, n_gens:] = 0
+                    elif "maximum" in result.stop_reason.lower():
+                        # For explosion, use the max limit if available
+                        # Otherwise forward-fill
+                        population_data[i, n_gens:] = result.population_size[-1] if result.population_size else np.nan
+                        fitness_best_data[i, n_gens:] = result.fitness_best[-1] if result.fitness_best else np.nan
+                        fitness_avg_data[i, n_gens:] = result.fitness_avg[-1] if result.fitness_avg else np.nan
             
             # Categorize stopping reason
             if result.stopped_early:
@@ -1315,8 +1360,8 @@ class ExperimentRunner:
             fitness_avg_mean = np.nanmean(fitness_avg_data, axis=0)
             fitness_avg_std = np.nanstd(fitness_avg_data, axis=0)
             
-            # Count active runs at each generation
-            runs_active = np.sum(~np.isnan(population_data), axis=0)
+            # Count truly active runs at each generation (not padded values)
+            runs_active = np.sum(truly_active, axis=0)
             completion_rate = runs_active / len(results)
         
         return AggregatedResults(
@@ -1390,6 +1435,15 @@ class ExperimentRunner:
         )
         ax.plot(gens, aggregated.population_min, 'r--', alpha=0.5, label='Min')
         ax.plot(gens, aggregated.population_max, 'g--', alpha=0.5, label='Max')
+        
+        # Add vertical lines at points where runs start dropping out
+        if aggregated.num_extinctions + aggregated.num_explosions > 0:
+            # Find where completion rate drops below certain thresholds
+            for threshold in [0.75, 0.5, 0.25]:
+                drop_idx = np.where(aggregated.completion_rate <= threshold)[0]
+                if len(drop_idx) > 0 and drop_idx[0] > 0:
+                    ax.axvline(gens[drop_idx[0]], color='gray', linestyle=':', alpha=0.4, linewidth=1)
+        
         ax.set_xlabel('Generation')
         ax.set_ylabel('Population Size')
         ax.set_title('Population Dynamics')
@@ -1685,7 +1739,41 @@ def create_example_experiments() -> list[ExperimentConfig]:
 
 
 if __name__ == "__main__":
-    """Example usage of the experiment runner."""
+    """
+    Example usage of the experiment runner.
+    
+    PADDING STRATEGIES FOR EARLY-STOPPED RUNS:
+    -------------------------------------------
+    When runs stop early (extinction/explosion), you can control how they're
+    handled in aggregated statistics:
+    
+    1. 'forward_fill' (DEFAULT): Carry last value forward
+       - Best for: Comparing final evolutionary outcomes
+       - Pros: Smooth curves, maintains sample size, reflects end state
+       - Cons: Doesn't show extinction = 0 population
+    
+    2. 'terminal_state': Use 0 for extinction, last value for explosion  
+       - Best for: Population stability analysis
+       - Pros: Biologically accurate (extinct = 0)
+       - Cons: Can create misleading means if many runs fail
+    
+    3. 'nan': Leave as NaN (only average over active runs)
+       - Best for: Statistical rigor, analyzing only successful runs
+       - Pros: Honest about sample size changes
+       - Cons: Curves can spike/disappear suddenly
+    
+    To use different strategies:
+        results = runner.run_experiment(exp_config)
+        
+        # Default (forward_fill)
+        agg_default = runner.aggregate_results(results)
+        
+        # Terminal state (extinction = 0)
+        agg_terminal = runner.aggregate_results(results, padding_strategy="terminal_state")
+        
+        # NaN only (no padding)
+        agg_nan = runner.aggregate_results(results, padding_strategy="nan")
+    """
     
     # Create runner
     runner = ExperimentRunner(base_output_dir="__experiments__")

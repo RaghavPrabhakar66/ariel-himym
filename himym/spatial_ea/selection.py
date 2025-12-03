@@ -92,17 +92,23 @@ def apply_selection(
     elif method == "fitness_based":
         # Show fitness range to help diagnose if all fitnesses are the same
         fitnesses = [ind.fitness for ind in new_population]
-        print(f"    Fitness range: {min(fitnesses):.4f} to {max(fitnesses):.4f} (range: {max(fitnesses) - min(fitnesses):.4f})")
+        if fitnesses:
+            print(f"    Fitness range: {min(fitnesses):.4f} to {max(fitnesses):.4f} (range: {max(fitnesses) - min(fitnesses):.4f})")
+        else:
+            print(f"    No survivors (population extinct)")
     elif method == "probabilistic_age":
         # Show age distribution of survivors
         ages = [current_generation - ind.generation for ind in new_population]
-        avg_age = sum(ages) / len(ages) if ages else 0
-        print(f"    Survivor age range: {min(ages)} to {max(ages)} generations (avg: {avg_age:.1f})")
-        # Show generation breakdown
-        gen_counts = {}
-        for ind in new_population:
-            gen_counts[ind.generation] = gen_counts.get(ind.generation, 0) + 1
-        print(f"    Generation distribution: {dict(sorted(gen_counts.items()))}")
+        if ages:
+            avg_age = sum(ages) / len(ages)
+            print(f"    Survivor age range: {min(ages)} to {max(ages)} generations (avg: {avg_age:.1f})")
+            # Show generation breakdown
+            gen_counts = {}
+            for ind in new_population:
+                gen_counts[ind.generation] = gen_counts.get(ind.generation, 0) + 1
+            print(f"    Generation distribution: {dict(sorted(gen_counts.items()))}")
+        else:
+            print(f"    No survivors (population extinct)")
     elif method == "energy_based":
         # Show energy distribution of survivors
         if new_population:

@@ -450,7 +450,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
 
     experiments['eventDriven_matingZone_assignedMating_probAge'] = ExperimentConfig(
         experiment_name="eventDriven_matingZone_assignedMating_probAge",
-        num_runs=1,
+        num_runs=40,
         
         # Incubation
         incubation_enabled=False,
@@ -470,7 +470,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         max_age=15,
 
         mating_zone_radius=2.0,
-        num_mating_zones=15,
+        num_mating_zones=22,
         zone_relocation_strategy="event_driven",
         min_zone_distance=2.0,
         
@@ -494,7 +494,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
 
     experiments['eventDriven_matingZone_assignedMating_energyBased'] = ExperimentConfig(
         experiment_name="eventDriven_matingZone_assignedMating_energyBased",
-        num_runs=1,
+        num_runs=2,
         
         # Incubation
         incubation_enabled=False,
@@ -518,7 +518,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         mating_energy_amount=30.0,
 
         mating_zone_radius=2.0,
-        num_mating_zones=15,
+        num_mating_zones=20,
         zone_relocation_strategy="event_driven",
         min_zone_distance=2.0,
         
