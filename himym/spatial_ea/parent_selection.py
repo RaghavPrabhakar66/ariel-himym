@@ -18,29 +18,19 @@ def find_pairs(
     use_periodic_boundaries: bool = False,
     **kwargs
 ) -> tuple[list[tuple[int, int]], set[int], set[int]]:
-    """
-    Find mating pairs in the population.
-    
-    Returns:
-        Tuple of (pairs, paired_indices, zones_with_matings)
-        - pairs: List of (parent1_idx, parent2_idx) tuples
-        - paired_indices: Set of indices that were paired
-        - zones_with_matings: Set of zone indices that had successful matings (empty if not using mating zones)
-    """
+    """Find mating pairs in the population."""
     if method == "proximity_pairing":
         pairs, paired_indices = _proximity_pairing(
             population, tracked_geoms, pairing_radius, 
             world_size, use_periodic_boundaries
         )
-        return pairs, paired_indices, set()  # No zone tracking for proximity pairing
+        return pairs, paired_indices, set()
     elif method == "random":
         pairs, paired_indices = _random_pairing(population)
-        return pairs, paired_indices, set()  # No zone tracking for random pairing
+        return pairs, paired_indices, set()
     elif method == "mating_zone":
-        # Support both single and multiple zones
         mating_zone_centers = kwargs.get('mating_zone_centers', None)
         if mating_zone_centers is None:
-            # Fall back to single zone for backward compatibility
             mating_zone_center = kwargs.get('mating_zone_center', (0.0, 0.0))
             mating_zone_centers = [mating_zone_center]
         
@@ -56,7 +46,7 @@ def find_pairs(
             population, tracked_geoms, pairing_radius,
             world_size, use_periodic_boundaries
         )
-        return pairs, paired_indices, set()  # No zone tracking for fallback
+        return pairs, paired_indices, set()
 
 
 def _proximity_pairing(
@@ -66,19 +56,16 @@ def _proximity_pairing(
     world_size: tuple[float, float],
     use_periodic_boundaries: bool
 ) -> tuple[list[tuple[int, int]], set[int]]:
+    """Pair individuals based on nearest neighbor within pairing radius."""
     pairs = []
     paired_indices = set()
-    pair_distances = []  # Track distances for debugging
+    pair_distances = []
     
-    # Iterate through population in order 
     for idx in range(len(population)):
-        # Skip if already paired
         if idx in paired_indices:
             continue
             
         current_pos = tracked_geoms[idx].xpos.copy()
-        
-        # Find nearest unpaired neighbor within pairing radius
         nearest_partner_idx = None
         nearest_distance = float('inf')
         
@@ -88,25 +75,21 @@ def _proximity_pairing(
             
             other_pos = tracked_geoms[other_idx].xpos.copy()
             
-            # Calculate distance using periodic boundaries if enabled
             if use_periodic_boundaries:
                 distance = periodic_distance(current_pos, other_pos, world_size)
             else:
                 distance = np.linalg.norm(current_pos - other_pos)
             
-            # Check if within pairing radius and is closer than current nearest
             if distance <= pairing_radius and distance < nearest_distance:
                 nearest_distance = distance
                 nearest_partner_idx = other_idx
         
-        # If found a partner within radius, create pair
         if nearest_partner_idx is not None:
             pairs.append((idx, nearest_partner_idx))
             paired_indices.add(idx)
             paired_indices.add(nearest_partner_idx)
             pair_distances.append(nearest_distance)
     
-    # Print pairing distance statistics
     if pair_distances:
         print(f"    Proximity pairing distances: min={min(pair_distances):.2f}m, "
               f"max={max(pair_distances):.2f}m, avg={np.mean(pair_distances):.2f}m")
@@ -117,26 +100,13 @@ def _proximity_pairing(
 def _random_pairing(
     population: list[SpatialIndividual]
 ) -> tuple[list[tuple[int, int]], set[int]]:
-    """
-    Randomly pair individuals from the population.
-    
-    This method ignores spatial information and fitness, creating random pairs.
-    Useful as a baseline or for testing non-spatial evolution.
-    
-    Args:
-        population: Current population of individuals
-        
-    Returns:
-        Tuple of (pairs, paired_indices)
-    """
+    """Randomly pair individuals from the population."""
     pairs = []
     paired_indices = set()
     
-    # Create shuffled list of indices
     indices = list(range(len(population)))
     np.random.shuffle(indices)
     
-    # Pair consecutive individuals in shuffled list
     for i in range(0, len(indices) - 1, 2):
         idx1 = indices[i]
         idx2 = indices[i + 1]
@@ -155,63 +125,35 @@ def _mating_zone_pairing(
     mating_zone_centers: list[tuple[float, float]],
     mating_zone_radius: float
 ) -> tuple[list[tuple[int, int]], set[int], set[int]]:
-    """
-    Pair individuals based on nearest neighbor, but only if they are within a mating zone.
-    
-    Supports multiple mating zones. Robots can mate if they are in ANY of the zones.
-    
-    Args:
-        population: Current population of individuals
-        tracked_geoms: List of MuJoCo geom objects for tracking positions
-        pairing_radius: Maximum distance for pairing within the zone
-        world_size: World dimensions (width, height)
-        use_periodic_boundaries: Whether to use periodic boundary conditions
-        mating_zone_centers: List of (x, y) coordinates of mating zone centers
-        mating_zone_radius: Radius of the mating zones (same for all zones)
-        
-    Returns:
-        Tuple of (pairs, paired_indices, zones_with_matings)
-        - pairs: List of (parent1_idx, parent2_idx) tuples
-        - paired_indices: Set of indices that were paired
-        - zones_with_matings: Set of zone indices that had successful matings
-    """
+    """Pair individuals based on nearest neighbor within mating zones."""
     pairs = []
     paired_indices = set()
-    zones_with_matings = set()  # Track which zones had matings
+    zones_with_matings = set()
     
-    # First, identify which robots are in which mating zone
-    # Map: zone_index -> list of robot indices in that zone
     robots_per_zone: dict[int, list[int]] = {i: [] for i in range(len(mating_zone_centers))}
     
     for idx in range(len(population)):
         robot_pos = tracked_geoms[idx].xpos.copy()
         
-        # Check which zone(s) this robot is in
         for zone_idx, zone_center in enumerate(mating_zone_centers):
             zone_center_3d = np.array([zone_center[0], zone_center[1], 0.0])
             
-            # Calculate distance to zone center
             if use_periodic_boundaries:
                 distance_to_center = periodic_distance(robot_pos, zone_center_3d, world_size)
             else:
                 distance_to_center = np.linalg.norm(robot_pos - zone_center_3d)
             
-            # Check if robot is within this mating zone
             if distance_to_center <= mating_zone_radius:
                 robots_per_zone[zone_idx].append(idx)
     
-    # Now pair robots within each zone using nearest neighbor
     for zone_idx, robots_in_zone in robots_per_zone.items():
-        zone_paired_in_this_zone = False  # Track if any pairing happened in this zone
+        zone_paired_in_this_zone = False
         
         for idx in robots_in_zone:
-            # Skip if already paired
             if idx in paired_indices:
                 continue
             
             current_pos = tracked_geoms[idx].xpos.copy()
-            
-            # Find nearest neighbor within pairing radius (among robots in same zone)
             nearest_partner_idx = None
             nearest_distance = float('inf')
             
@@ -221,25 +163,21 @@ def _mating_zone_pairing(
                 
                 other_pos = tracked_geoms[other_idx].xpos.copy()
                 
-                # Calculate distance using periodic boundaries if enabled
                 if use_periodic_boundaries:
                     distance = periodic_distance(current_pos, other_pos, world_size)
                 else:
                     distance = np.linalg.norm(current_pos - other_pos)
                 
-                # Check if within pairing radius and is closer than current nearest
                 if distance <= pairing_radius and distance < nearest_distance:
                     nearest_distance = distance
                     nearest_partner_idx = other_idx
             
-            # If found a partner within radius, create pair
             if nearest_partner_idx is not None:
                 pairs.append((idx, nearest_partner_idx))
                 paired_indices.add(idx)
                 paired_indices.add(nearest_partner_idx)
                 zone_paired_in_this_zone = True
         
-        # Track this zone if any pairing occurred
         if zone_paired_in_this_zone:
             zones_with_matings.add(zone_idx)
     
@@ -252,45 +190,28 @@ def generate_random_zone_centers(
     min_zone_distance: float,
     margin: float = 1.0
 ) -> list[tuple[float, float]]:
-    """
-    Generate random positions for multiple mating zones.
-    
-    Ensures zones don't overlap too much and stay within world boundaries.
-    
-    Args:
-        num_zones: Number of zones to generate
-        world_size: World dimensions (width, height)
-        zone_radius: Radius of each zone
-        min_zone_distance: Minimum distance between zone centers (in zone radii units)
-        margin: Margin from world edges (in meters)
-        
-    Returns:
-        List of (x, y) coordinates for zone centers
-    """
+    """Generate random positions for multiple mating zones."""
     if num_zones <= 0:
         return []
     
     zone_centers = []
     min_distance = zone_radius * min_zone_distance
     
-    # Available area for zone centers
     x_min = margin + zone_radius
     x_max = world_size[0] - margin - zone_radius
     y_min = margin + zone_radius
     y_max = world_size[1] - margin - zone_radius
     
-    max_attempts = 1000 * num_zones  # Prevent infinite loops
+    max_attempts = 1000 * num_zones
     attempts = 0
     
     while len(zone_centers) < num_zones and attempts < max_attempts:
         attempts += 1
         
-        # Generate random position
         x = np.random.uniform(x_min, x_max)
         y = np.random.uniform(y_min, y_max)
         new_center = (x, y)
         
-        # Check distance to existing zones
         too_close = False
         for existing_center in zone_centers:
             distance = np.sqrt((x - existing_center[0])**2 + (y - existing_center[1])**2)
@@ -308,18 +229,7 @@ def generate_random_zone_centers(
     return zone_centers
 
 def get_mating_zone_info(config: Any) -> dict[str, Any]:
-    """
-    Get information about the mating zone for visualization or robot behavior.
-    
-    Args:
-        config: EAConfig object containing mating zone parameters
-        
-    Returns:
-        Dictionary with mating zone information:
-            - 'center': (x, y) tuple of zone center
-            - 'radius': float radius of zone
-            - 'enabled': bool indicating if mating_zone method is active
-    """
+    """Get information about the mating zone for visualization or robot behavior."""
     return {
         'center': tuple(config.mating_zone_center),
         'radius': config.mating_zone_radius,
@@ -333,19 +243,7 @@ def is_in_mating_zone(
     world_size: tuple[float, float],
     use_periodic_boundaries: bool = False
 ) -> bool:
-    """
-    Check if a robot position is within any mating zone.
-    
-    Args:
-        position: 3D position array [x, y, z] of the robot
-        mating_zone_centers: List of (x, y) coordinates of zone centers
-        mating_zone_radius: Radius of the mating zones
-        world_size: World dimensions (width, height)
-        use_periodic_boundaries: Whether to use periodic boundary conditions
-        
-    Returns:
-        True if position is within any mating zone, False otherwise
-    """
+    """Check if a robot position is within any mating zone."""
     for zone_center in mating_zone_centers:
         zone_center_3d = np.array([zone_center[0], zone_center[1], 0.0])
         
@@ -366,29 +264,13 @@ def calculate_offspring_positions(
     world_size: tuple[float, float],
     use_periodic_boundaries: bool = False
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    """
-    Calculate spawn positions for offspring from parent pairs.
-    
-    Each offspring is placed at a random angle around its parent,
-    at a fixed radius (offspring_radius).
-    
-    Args:
-        pairs: List of (parent1_idx, parent2_idx) tuples
-        current_positions: List of current positions for all individuals
-        offspring_radius: Radius around parent where offspring spawn
-        world_size: World dimensions (width, height) for boundary wrapping
-        use_periodic_boundaries: Whether to wrap positions using periodic boundaries
-        
-    Returns:
-        List of (child1_pos, child2_pos) tuples corresponding to pairs
-    """
+    """Calculate spawn positions for offspring from parent pairs."""
     pair_positions = []
     
     for parent1_idx, parent2_idx in pairs:
         parent1_pos = current_positions[parent1_idx]
         parent2_pos = current_positions[parent2_idx]
         
-        # Random positions on circle edge around each parent
         angle1 = np.random.uniform(0, 2 * np.pi)
         child1_offset = np.array([
             offspring_radius * np.cos(angle1),
@@ -403,7 +285,6 @@ def calculate_offspring_positions(
             0.0
         ])
         
-        # Apply offspring positions with periodic wrapping if enabled
         if use_periodic_boundaries:
             try:
                 from periodic_boundary_utils import wrap_offspring_position
@@ -417,7 +298,6 @@ def calculate_offspring_positions(
                 parent2_pos, child2_offset, world_size
             )
         else:
-            # Non-periodic: just add offset (may go outside bounds)
             child1_pos = parent1_pos + child1_offset
             child2_pos = parent2_pos + child2_offset
         

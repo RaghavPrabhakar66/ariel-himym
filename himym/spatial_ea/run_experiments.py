@@ -494,7 +494,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
 
     experiments['eventDriven_matingZone_assignedMating_energyBased'] = ExperimentConfig(
         experiment_name="eventDriven_matingZone_assignedMating_energyBased",
-        num_runs=2,
+        num_runs=1,
         
         # Incubation
         incubation_enabled=False,
