@@ -1184,6 +1184,141 @@ class ExperimentRunner:
                     safe_k = str(k).replace('/', '_').replace(' ', '_')
                     plt.savefig(visuals_dir / f"grid_param_distribution_{safe_k}.png", dpi=200)
                     plt.close()
+                
+                # --- NEW: Conditional distribution plots for multi-parameter grids ---
+                if len(keys) >= 2:
+                    if verbose:
+                        print(f"  Generating conditional distribution plots for {len(keys)} parameters...")
+                    
+                    # For each parameter, create distributions conditioned on values of other parameters
+                    for focal_param in keys:
+                        other_params = [k for k in keys if k != focal_param]
+                        
+                        # Get unique values for other parameters
+                        other_param_values = {}
+                        for other_param in other_params:
+                            vals = sorted(df[other_param].unique())
+                            # Try numeric sort
+                            try:
+                                vals = sorted(vals, key=lambda x: float(x))
+                            except:
+                                pass
+                            other_param_values[other_param] = vals
+                        
+                        # Generate plots for each combination of other parameter values
+                        # For 2 params total: condition on the one other parameter
+                        # For 3+ params: condition on each other parameter separately (marginalizing over rest)
+                        if len(keys) == 2:
+                            # Simple case: one conditioning variable
+                            other_param = other_params[0]
+                            for other_val in other_param_values[other_param]:
+                                # Filter dataframe to this conditioning value
+                                df_subset = df[df[other_param] == other_val]
+                                
+                                if len(df_subset) == 0:
+                                    continue
+                                
+                                # Build groups for focal parameter
+                                groups: dict[Any, list[float]] = {}
+                                for _, row in df_subset.iterrows():
+                                    exp_name = row.get('experiment_name')
+                                    focal_val = row.get(focal_param)
+                                    if exp_name is None:
+                                        continue
+                                    runs = self.experiments.get(exp_name, [])
+                                    final_pops = [r.population_size[-1] if r.population_size else 0 for r in runs]
+                                    groups.setdefault(focal_val, []).extend(final_pops)
+                                
+                                if not groups:
+                                    continue
+                                
+                                # Sort and plot
+                                try:
+                                    sorted_items = sorted(groups.items(), key=lambda x: float(x[0]))
+                                except:
+                                    sorted_items = list(groups.items())
+                                
+                                labels = [str(item[0]) for item in sorted_items]
+                                data = [item[1] for item in sorted_items]
+                                
+                                if not any(len(d) for d in data):
+                                    continue
+                                
+                                plt.figure(figsize=(8, 4))
+                                plt.boxplot(data, showmeans=True, patch_artist=True,
+                                           boxprops=dict(facecolor='lightcoral', color='black'))
+                                plt.xlabel(focal_param)
+                                plt.ylabel('Final population')
+                                plt.title(f'Final population across {focal_param} | {other_param}={other_val}')
+                                plt.xticks(range(1, len(labels) + 1), labels, rotation=45, ha='right')
+                                plt.tight_layout()
+                                safe_focal = str(focal_param).replace('/', '_').replace(' ', '_')
+                                safe_other = str(other_param).replace('/', '_').replace(' ', '_')
+                                safe_val = str(other_val).replace('/', '_').replace(' ', '_')
+                                plt.savefig(visuals_dir / f"grid_conditional_{safe_focal}_given_{safe_other}={safe_val}.png", dpi=200)
+                                plt.close()
+                        
+                        else:
+                            # For 3+ parameters: condition on each other parameter separately
+                            for other_param in other_params:
+                                for other_val in other_param_values[other_param]:
+                                    # Filter to this conditioning value (marginalizing over remaining params)
+                                    df_subset = df[df[other_param] == other_val]
+                                    
+                                    if len(df_subset) == 0:
+                                        continue
+                                    
+                                    # Build groups for focal parameter (aggregating over remaining params)
+                                    groups: dict[Any, list[float]] = {}
+                                    for _, row in df_subset.iterrows():
+                                        exp_name = row.get('experiment_name')
+                                        focal_val = row.get(focal_param)
+                                        if exp_name is None:
+                                            continue
+                                        runs = self.experiments.get(exp_name, [])
+                                        final_pops = [r.population_size[-1] if r.population_size else 0 for r in runs]
+                                        groups.setdefault(focal_val, []).extend(final_pops)
+                                    
+                                    if not groups:
+                                        continue
+                                    
+                                    # Sort and plot
+                                    try:
+                                        sorted_items = sorted(groups.items(), key=lambda x: float(x[0]))
+                                    except:
+                                        sorted_items = list(groups.items())
+                                    
+                                    labels = [str(item[0]) for item in sorted_items]
+                                    data = [item[1] for item in sorted_items]
+                                    
+                                    if not any(len(d) for d in data):
+                                        continue
+                                    
+                                    # Get list of other param values that were marginalized
+                                    remaining_params = [p for p in other_params if p != other_param]
+                                    marg_info = ""
+                                    if remaining_params:
+                                        marg_info = f" (marginalizing {', '.join(remaining_params)})"
+                                    
+                                    plt.figure(figsize=(8, 4))
+                                    plt.boxplot(data, showmeans=True, patch_artist=True,
+                                               boxprops=dict(facecolor='lightcoral', color='black'))
+                                    plt.xlabel(focal_param)
+                                    plt.ylabel('Final population')
+                                    plt.title(f'{focal_param} | {other_param}={other_val}{marg_info}')
+                                    plt.xticks(range(1, len(labels) + 1), labels, rotation=45, ha='right')
+                                    plt.tight_layout()
+                                    safe_focal = str(focal_param).replace('/', '_').replace(' ', '_')
+                                    safe_other = str(other_param).replace('/', '_').replace(' ', '_')
+                                    safe_val = str(other_val).replace('/', '_').replace(' ', '_')
+                                    plt.savefig(visuals_dir / f"grid_conditional_{safe_focal}_given_{safe_other}={safe_val}.png", dpi=200)
+                                    plt.close()
+                    
+                    if verbose:
+                        print(f"  Conditional distribution plots complete!")
+                
+            except Exception as e:
+                print(f"Warning: failed to produce per-parameter distributions: {e}")
                 # Also produce a stacked bar showing stop-reason fractions per parameter value
                 try:
                     # For each swept key produce a stacked fraction bar of stop reasons
