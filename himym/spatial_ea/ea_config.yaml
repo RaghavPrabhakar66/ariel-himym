@@ -23,7 +23,7 @@ incubation:
 
 # Population and Evolution Parameters
 population:
-  size: 20                    # Number of individuals in the population
+  size: 30                    # Number of individuals in the population
   num_generations: 50         # Total number of generations to evolve
   max_population_limit: 100   # Absolute maximum population of simulation (simulation stops if reached)
   min_population_limit: 1     # Minimum population (simulation stops if population drops below this)
@@ -32,8 +32,8 @@ population:
 # Selection Parameters
 selection:
   pairing_radius: 10.0      # Maximum distance for pairing robots (meters)
-  offspring_radius: 2.0      # Radius around parents where offspring spawn (meters)
-  target_population_size: 30     # Target population size used for certain selection methods. (Doesn't stop the simulation)
+  offspring_radius: 3.0      # Radius around parents where offspring spawn (meters)
+  target_population_size: 30     # Target population size used for non-probabilistic age population. (Doesn't stop the simulation)
   selection_method: "fitness_based"  # Selection method: "parents_die", "fitness_based", "age_based", "probabilistic_age", "energy_based"
   pairing_method: "mating_zone"  # Pairing method: "proximity_pairing", "random", "mating_zone"
   movement_bias: "assigned_zone"  # Directional input source: "nearest_neighbor", "nearest_zone", "assigned_zone", "none"
@@ -69,7 +69,7 @@ mutation:
 
 # Simulation Parameters
 simulation:
-  time: 30.0                  # Duration of each fitness evaluation (seconds)
+  time: 60.0                  # Duration of each fitness evaluation (seconds)
   control_clip_min: -1.5708   # Minimum control value (-pi/2 radians, -90 degrees)
   control_clip_max: 1.5708    # Maximum control value (pi/2 radians, 90 degrees)
   use_periodic_boundaries: true  # Enable periodic (toroidal) boundaries

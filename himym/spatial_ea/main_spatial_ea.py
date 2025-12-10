@@ -97,6 +97,34 @@ class SpatialEA:
         else:
             print(f"  Zone relocation: {strategy}")
     
+    def cleanup_simulation_resources(self) -> None:
+        """
+        Explicitly clean up simulation resources to prevent memory leaks.
+        Call this after each generation or when done with simulation.
+        """
+        import gc
+        
+        # Clear MuJoCo model and data
+        if self.data is not None:
+            del self.data
+            self.data = None
+        
+        if self.model is not None:
+            del self.model
+            self.model = None
+        
+        # Clear world
+        if self.world is not None:
+            del self.world
+            self.world = None
+        
+        # Clear robot references
+        self.robots = []
+        self.tracked_geoms = []
+        
+        # Force garbage collection
+        gc.collect()
+    
     def _assign_zones_to_population(self) -> None:
         """Assign each individual to a random mating zone."""
         if not self.current_zone_centers or len(self.current_zone_centers) == 0:
@@ -894,6 +922,8 @@ class SpatialEA:
                             duration=config.simulation_time, 
                             save_trajectories=True
                         )
+                        # Clean up resources before breaking
+                        self.cleanup_simulation_resources()
                         break
                     
                     if self.population_size < config.min_population_limit:
@@ -907,6 +937,8 @@ class SpatialEA:
                             f"Population extinction after selection (below {config.min_population_limit})",
                             self.num_generations
                         )
+                        # Clean up resources before breaking
+                        self.cleanup_simulation_resources()
                         break
             else:
                 # Run mating movement to capture final positions
@@ -914,6 +946,9 @@ class SpatialEA:
                     duration=config.simulation_time, 
                     save_trajectories=True
                 )
+            
+            # Clean up simulation resources after each generation to manage memory
+            self.cleanup_simulation_resources()
         
         print(f"\n{'='*60}")
         print("EVOLUTION COMPLETE")

@@ -178,8 +178,6 @@ def define_experiments() -> dict[str, ExperimentConfig]:
     )
 
 
-
-
     # ===== Nearest Neighbor Movement Bias Experiments =====
     experiments['nearest_neighbor_fitBased'] = ExperimentConfig(
         experiment_name="nearest_neighbor_fitBased",
@@ -220,17 +218,17 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         save_trajectories=True,
         save_individual_runs=True,
     )
-    # DONE
+    # uv run himym/spatial_ea/run_experiments.py --grid-file grid_nearest_neighbor_energyCost.yaml --grid-base-experiment nearest_neighbor_energyCost --parallel --num-workers 5
     experiments['nearest_neighbor_energyCost'] = ExperimentConfig(
         experiment_name="nearest_neighbor_energyCost",
-        num_runs=30,
+        num_runs=5,
         
         # Incubation
         incubation_enabled=False,
         
         # Population parameters 
-        population_size=10,
-        num_generations=50,
+        population_size=30,
+        num_generations=100,
         max_population_limit=100,
         min_population_limit=1,
         stop_on_limits=True,
@@ -246,7 +244,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         initial_energy=100.0,
         energy_depletion_rate=10.0,
         mating_energy_effect="cost",
-        mating_energy_amount=35.0,
+        mating_energy_amount=10.0,
         
         # Mutation/Crossover (shared with incubation)
         mutation_rate=0.8,
@@ -256,7 +254,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         crossover_rate=0.9,
         
         # Simulation
-        simulation_time=30.0,
+        simulation_time=60.0,
         use_periodic_boundaries=True,
         
         # Output
@@ -448,9 +446,10 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         save_individual_runs=True,
     )
 
+    # uv run himym/spatial_ea/run_experiments.py --grid-file grid_probAge_event_based.yaml --grid-base-experiment eventDriven_matingZone_assignedMating_probAge --parallel --num-workers 10
     experiments['eventDriven_matingZone_assignedMating_probAge'] = ExperimentConfig(
         experiment_name="eventDriven_matingZone_assignedMating_probAge",
-        num_runs=40,
+        num_runs=5,
         
         # Incubation
         incubation_enabled=False,
@@ -467,7 +466,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         target_population_size=30,
         pairing_radius=10,
         offspring_radius=3.0,
-        max_age=15,
+        max_age=25,
 
         mating_zone_radius=2.0,
         num_mating_zones=22,
@@ -482,7 +481,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         crossover_rate=0.9,
         
         # Simulation
-        simulation_time=30.0,
+        simulation_time=60.0,
         use_periodic_boundaries=True,
         
         # Output
@@ -494,7 +493,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
 
     experiments['eventDriven_matingZone_assignedMating_energyBased'] = ExperimentConfig(
         experiment_name="eventDriven_matingZone_assignedMating_energyBased",
-        num_runs=1,
+        num_runs=3,
         
         # Incubation
         incubation_enabled=False,
@@ -513,9 +512,9 @@ def define_experiments() -> dict[str, ExperimentConfig]:
 
         enable_energy=True,
         initial_energy=100.0,
-        energy_depletion_rate=10.0,
+        energy_depletion_rate=5.0,
         mating_energy_effect="cost",
-        mating_energy_amount=30.0,
+        mating_energy_amount=25.0,
 
         mating_zone_radius=2.0,
         num_mating_zones=20,
@@ -530,7 +529,7 @@ def define_experiments() -> dict[str, ExperimentConfig]:
         crossover_rate=0.9,
         
         # Simulation
-        simulation_time=30.0,
+        simulation_time=60.0,
         use_periodic_boundaries=True,
         
         # Output
@@ -696,6 +695,23 @@ def main():
         action='store_true',
         help='Run each grid point sequentially (still can run trials in parallel inside each experiment)'
     )
+    parser.add_argument(
+        '--memory-monitor',
+        action='store_true',
+        help='Enable memory monitoring and logging'
+    )
+    parser.add_argument(
+        '--memory-log',
+        type=str,
+        default=None,
+        help='Path to save memory usage log (CSV format)'
+    )
+    parser.add_argument(
+        '--max-memory-mb',
+        type=int,
+        default=None,
+        help='Auto-reduce workers if memory usage exceeds this limit (MB)'
+    )
     
     args = parser.parse_args()
     
@@ -711,10 +727,49 @@ def main():
         print("=" * 60)
         print("\nUse --experiment <name> to run a specific experiment")
         print("Use --experiment all to run all experiments")
+        print("\nNote: Clustering analysis (DBSCAN + t-SNE) automatically runs for all 4 distance types")
         return
     
     # Create runner
     runner = ExperimentRunner(base_output_dir=args.output_dir)
+    
+    
+    # Setup memory monitoring if requested
+    memory_monitor = None
+    if args.memory_monitor:
+        try:
+            from memory_utils import MemoryMonitor
+            log_file = args.memory_log or f"{args.output_dir}/memory_usage.csv"
+            warning_threshold = args.max_memory_mb or 8000
+            memory_monitor = MemoryMonitor(log_file=log_file, warning_threshold_mb=warning_threshold)
+            memory_monitor.log_memory("Initialization")
+            print(f"Memory monitoring enabled. Log: {log_file}")
+        except ImportError:
+            print("Warning: psutil not installed. Memory monitoring disabled.")
+            print("Install with: pip install psutil")
+    
+    # Auto-adjust workers based on available memory if requested
+    if args.max_memory_mb and args.parallel:
+        try:
+            import psutil
+            virtual_memory = psutil.virtual_memory()
+            available_mb = virtual_memory.available / 1024 / 1024
+            
+            # Estimate memory per worker (conservative: 2GB per worker)
+            estimated_memory_per_worker = 2000  # MB
+            max_workers_by_memory = int(available_mb / estimated_memory_per_worker)
+            
+            if args.num_workers is None:
+                import multiprocessing
+                args.num_workers = min(max_workers_by_memory, multiprocessing.cpu_count() - 1)
+                print(f"Auto-adjusted workers based on available memory: {args.num_workers}")
+            elif args.num_workers > max_workers_by_memory:
+                print(f"Warning: Requested {args.num_workers} workers but only {max_workers_by_memory} "
+                      f"recommended based on available memory ({available_mb:.0f} MB)")
+                args.num_workers = max_workers_by_memory
+                print(f"Reduced to {args.num_workers} workers")
+        except ImportError:
+            print("Warning: psutil not installed. Cannot auto-adjust workers based on memory.")
     
     # Determine which experiments to run
     if args.experiment == 'all':
@@ -747,6 +802,35 @@ def main():
             )
 
             print(f"Grid search finished. Summary:\n{df}")
+            
+            # Perform clustering analysis on all grid experiments that completed
+            grid_experiments = df[df['num_completed'] > 0]['experiment_name'].tolist()
+            
+            if grid_experiments:
+                print(f"\n\n{'='*70}")
+                print(f"PERFORMING GENOTYPE CLUSTERING ANALYSIS ON GRID EXPERIMENTS")
+                print(f"{'='*70}")
+                print(f"Will analyze {len(grid_experiments)} grid experiment(s)")
+                print(f"Method: DBSCAN + t-SNE for all 4 distance types")
+                print(f"{'='*70}\n")
+                
+                for exp_name in grid_experiments:
+                    # Find the experiment directory
+                    exp_dirs = list(runner.base_output_dir.glob(f"{exp_name}_*"))
+                    if exp_dirs:
+                        # Use the most recent experiment directory
+                        exp_dir = max(exp_dirs, key=lambda p: p.stat().st_mtime)
+                        try:
+                            runner.analyze_genotype_clustering(experiment_dir=exp_dir)
+                        except Exception as e:
+                            print(f"Error in clustering analysis for {exp_name}: {e}")
+                            import traceback
+                            traceback.print_exc()
+            
+            print("\n" + "=" * 60)
+            print("GRID SEARCH COMPLETE!")
+            print(f"Results saved to: {runner.base_output_dir}")
+            print("=" * 60)
             return
         if args.experiment not in experiments:
             print(f"Error: Unknown experiment '{args.experiment}'")
@@ -765,9 +849,15 @@ def main():
     if args.parallel:
         print(f"Parallel execution enabled with {args.num_workers or 'auto'} workers")
     
+    if memory_monitor:
+        memory_monitor.log_memory("Before experiments")
+    
     completed_experiments = []
-    for exp_config in experiments_to_run:
+    for i, exp_config in enumerate(experiments_to_run):
         try:
+            if memory_monitor:
+                memory_monitor.log_memory(f"Starting experiment {i+1}/{len(experiments_to_run)}: {exp_config.experiment_name}")
+            
             # Choose parallel or sequential execution
             if args.parallel:
                 results = runner.run_experiment_parallel(
@@ -780,6 +870,11 @@ def main():
             
             if results:
                 completed_experiments.append(exp_config.experiment_name)
+            
+            if memory_monitor:
+                memory_monitor.log_memory(f"Completed experiment {i+1}/{len(experiments_to_run)}: {exp_config.experiment_name}", 
+                                         force_gc=True)
+                
         except KeyboardInterrupt:
             print("\n\nInterrupted by user!")
             break
@@ -788,6 +883,32 @@ def main():
             import traceback
             traceback.print_exc()
             continue
+    
+    if memory_monitor:
+        memory_monitor.log_memory("After all experiments")
+        memory_monitor.print_summary()
+    
+    # ALWAYS perform clustering analysis on completed experiments
+    if completed_experiments:
+        print(f"\n\n{'='*70}")
+        print(f"PERFORMING GENOTYPE CLUSTERING ANALYSIS")
+        print(f"{'='*70}")
+        print(f"Will analyze {len(completed_experiments)} experiment(s)")
+        print(f"Method: DBSCAN + t-SNE for all 4 distance types")
+        print(f"{'='*70}\n")
+        
+        for exp_name in completed_experiments:
+            # Find the experiment directory
+            exp_dirs = list(runner.base_output_dir.glob(f"{exp_name}_*"))
+            if exp_dirs:
+                # Use the most recent experiment directory
+                exp_dir = max(exp_dirs, key=lambda p: p.stat().st_mtime)
+                try:
+                    runner.analyze_genotype_clustering(experiment_dir=exp_dir)
+                except Exception as e:
+                    print(f"Error in clustering analysis for {exp_name}: {e}")
+                    import traceback
+                    traceback.print_exc()
     
     # Create comparison if multiple experiments completed
     if len(completed_experiments) > 1:
