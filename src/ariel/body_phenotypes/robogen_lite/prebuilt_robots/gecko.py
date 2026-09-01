@@ -4,10 +4,12 @@ from ariel.body_phenotypes.robogen_lite.config import ModuleFaces
 from ariel.body_phenotypes.robogen_lite.modules.brick import BrickModule
 from ariel.body_phenotypes.robogen_lite.modules.core import CoreModule
 from ariel.body_phenotypes.robogen_lite.modules.hinge import HingeModule
+from ariel import DATA
 
 
 def gecko() -> CoreModule:
-    """
+    """Gecko robot body.
+
     Create and attach bodies/sites, then print relative orientations between
     abdomen and spine bodies to debug hinge placement/orientation.
 
@@ -16,9 +18,13 @@ def gecko() -> CoreModule:
     The gecko body consists of a core module, 4 legs (flippers), a neck and a
     spine. For better mobility the front two flippers have 2 hinges (joints),
     each rotated 90 degrees to each other. Additionally, the back two flippers
-    are rotated 45 degrees compared to the bode, to encourage forward movement.
-    """
+    are rotated 45 degrees compared to the body, to encourage forward movement.
 
+    Returns
+    -------
+    CoreModule
+        The core module of the robot, with all other modules attached.
+    """
     core = CoreModule(
         index=0,
     )
@@ -140,3 +146,9 @@ def gecko() -> CoreModule:
         prefix="br_flipper",
     )
     return core
+
+if __name__ == "__main__":
+    gecko_rob = gecko()
+    gecko_xml = gecko_rob.spec.to_xml()
+    with open(DATA / "gecko.xml", "w", encoding="utf-8") as f:
+        f.write(gecko_xml)
