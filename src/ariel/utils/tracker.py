@@ -16,7 +16,7 @@ class Tracker:
         mujoco_obj_to_find: mj.mjtObj | None = None,
         name_to_bind: str | None = None,
         observable_attributes: list[str] | None = None,
-        quiet : bool | None = False,
+        quiet: bool | None = False,
     ) -> None:
         """
         Track and log the state of specified MuJoCo objects.
@@ -36,14 +36,18 @@ class Tracker:
             If None, defaults to tracking the "xpos" attribute.
         """
         # Set default tracking parameters
-        if mujoco_obj_to_find is None or name_to_bind is None:
+        if mujoco_obj_to_find is None:
             mujoco_obj_to_find = mj.mjtObj.mjOBJ_GEOM
+            if not quiet:
+                log.info(
+                    "No MuJoCo object type provided, defaulting to tracking geoms.",
+                )
+        if name_to_bind is None:
             name_to_bind = "core"
             if not quiet:
-                msg = "No tracking parameters provided, "
-                msg += "defaulting to tracking all geoms with 'core' in their name."
-                log.info(msg)
-            
+                log.info(
+                    "No object name provided, defaulting to tracking objects with 'core' in their name.",
+                )
 
         # Set default observable attributes
         if observable_attributes is None:
@@ -54,6 +58,7 @@ class Tracker:
         self.name_to_bind = name_to_bind
         self.observable_attributes = observable_attributes
         self.history: dict[str, dict[int, list[Any]]] = {}
+        self.to_track: list[Any] = []
 
     def setup(
         self,

@@ -19,6 +19,7 @@ from rich.traceback import install
 # --- DATA SETUP --- #
 CWD = Path.cwd()
 DATA = Path(CWD / "__data__")
+DATA.mkdir(parents=True, exist_ok=True)
 
 # --- RANDOM GENERATOR SETUP --- #
 SEED = 42

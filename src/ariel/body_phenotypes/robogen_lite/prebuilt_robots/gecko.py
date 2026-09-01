@@ -4,6 +4,7 @@ from ariel.body_phenotypes.robogen_lite.config import ModuleFaces
 from ariel.body_phenotypes.robogen_lite.modules.brick import BrickModule
 from ariel.body_phenotypes.robogen_lite.modules.core import CoreModule
 from ariel.body_phenotypes.robogen_lite.modules.hinge import HingeModule
+from ariel import DATA
 
 
 def gecko() -> CoreModule:
@@ -149,5 +150,5 @@ def gecko() -> CoreModule:
 if __name__ == "__main__":
     gecko_rob = gecko()
     gecko_xml = gecko_rob.spec.to_xml()
-    with open("ariel/src/ariel/body_phenotypes/robogen_lite/prebuilt_robots/gecko.xml", "w", encoding="utf-8") as f:
+    with open(DATA / "gecko.xml", "w", encoding="utf-8") as f:
         f.write(gecko_xml)

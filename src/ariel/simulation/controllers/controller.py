@@ -34,8 +34,8 @@ class Controller:
         self,
         model: mj.MjModel,
         data: mj.MjData,
-        *args: Any | None,
-        **kwargs: dict[Any, Any] | None,
+        *args: Any,
+        **kwargs: Any,
     ) -> None:
         """Sets the controller callback function and gives additional arguments.
 

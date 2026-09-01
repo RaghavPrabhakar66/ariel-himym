@@ -10,7 +10,12 @@ from ariel import console
 
 def compile_all_world(*, with_load_compiled: bool = True) -> None:
     """Entry point."""
-    for name, cls in inspect.getmembers(envs, inspect.isclass):
+    for name in envs.__all__:
+        if name in {"BaseWorld", "CompoundWorld"}:
+            continue
+        cls = getattr(envs, name)
+        if not inspect.isclass(cls):
+            continue
         world: envs.BaseWorld = cls(load_precompiled=with_load_compiled)
         world.store_to_xml()
         console.print(f"Compiled '{name}' to XML.")
